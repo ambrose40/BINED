@@ -20,13 +20,24 @@ PATH_BYTES      equ 128
 DATA_ROWS       equ 20
 DATA_TOP        equ 2
 DATA_COLUMN     equ 10
+HELP_LEFT       equ 11
+HELP_TOP        equ 3
+HELP_WIDTH      equ 58
+HELP_HEIGHT     equ 19
 ; VGA text attributes: background in the high nibble, foreground in the low.
-; Keep every background black; 02h is dark green, 0Ah bright green, 0Dh purple.
-ATTR_NORMAL     equ 0Ah           ; file bytes, ASCII preview, filename
-ATTR_TITLE      equ 02h           ; dark-green title and dialog text
-ATTR_OFFSET     equ 02h           ; dark-green offsets and column headings
+; Black backgrounds; 01h blue, 02h dark green, 05h dark purple, 0Dh purple.
+ATTR_NORMAL     equ 0Ah           ; file digits, filename, help descriptions
+ATTR_TITLE      equ 02h           ; dark-green dialog text
+ATTR_OFFSET     equ 02h           ; dark-green row offsets
 ATTR_SELECTED   equ 0Dh           ; purple selected byte / EOF marker
-ATTR_STATUS     equ 0Ah           ; green position, size and status messages
+ATTR_STATUS     equ 0Ah           ; green Offset / Size / Capacity labels
+ATTR_VALUE      equ 05h           ; dark-purple Offset / Size / Capacity values
+ATTR_FOOTER     equ 07h           ; light-gray bottom line
+ATTR_HELP_KEY   equ 0Eh           ; bright-yellow key names in F1 help
+ATTR_HEADING    equ 0Fh           ; bright-white editor title
+ATTR_COLUMN     equ 0Ch           ; bright-red OFFSET / DATA / ASCII labels
+ATTR_MODE       equ 0Eh           ; bright-yellow active HEX / BIN mode
+ATTR_ASCII      equ 07h           ; light-gray ASCII preview
 
 _STACK segment para stack use16 'STACK'
     db STACK_BYTES dup (?)
@@ -83,11 +94,28 @@ asciiText       db 'ASCII',0
 offsetText      db 'Offset: ',0
 sizeText        db '  Size: ',0
 capacityText    db '  Capacity: ',0
-keysText        db 'F1 Help  F2 Save  F4 Save as  F5 BIN  F6 HEX  Tab Mode  Esc Quit',0
-helpText1       db 'Arrows: move digits/rows. PgUp/PgDn: page. Home/End: row start/end.',0
-helpText2       db 'Ctrl-Home/End: file start/EOF. Ins: insert 00. Del: delete byte.',0
-helpText3       db 'Type 0-9,A-F (hex) or 0,1 (binary). At EOF, typing appends a byte.',0
-helpText4       db 'Space: next byte. Backspace: previous byte. Any key returns.',0
+helpTitle       db ' F1 Help ',0
+helpText1       db 'Arrows: move between digits and rows.',0
+helpText2       db 'PgUp / PgDn: move one page up / down.',0
+helpText3       db 'Home / End: move to the row start / end.',0
+helpText4       db 'Ctrl-Home / Ctrl-End: move to file start / EOF.',0
+helpText5       db 'Ins / Del: insert 00 / delete the current byte.',0
+helpText6       db '0-9 / A-F (hex), 0 / 1 (binary): type to edit.',0
+helpText7       db 'At EOF, typing appends a byte.',0
+helpText8       db 'Space: move to the next byte.',0
+helpText9       db 'Backspace: move to the previous byte.',0
+helpText10      db 'F2: save the file.',0
+helpText11      db 'F4: save the file under a new name.',0
+helpText12      db 'F5: switch to binary mode.',0
+helpText13      db 'F6: switch to hexadecimal mode.',0
+helpText14      db 'Tab: toggle hexadecimal / binary mode.',0
+helpText15      db 'Esc: quit (prompts if changes are unsaved).',0
+helpLines       dw offset helpText1, offset helpText2, offset helpText3
+                dw offset helpText4, offset helpText5, offset helpText6
+                dw offset helpText7, offset helpText8, offset helpText9
+                dw offset helpText10, offset helpText11, offset helpText12
+                dw offset helpText13, offset helpText14, offset helpText15, 0
+helpReturn      db 'Any key: return to the editor.',0
 saveAsText      db 'Save as (Esc cancels, Enter accepts):',0
 quitText        db 'Unsaved changes: S = save and quit, D = discard, Esc = cancel',0
 msgReady        db 'F1 Help | Sizes/offsets are hex. EOF is an append position.',0
@@ -1126,11 +1154,11 @@ RenderScreen proc
     mov cx,2000
     rep stosw
     xor di,di
-    mov ax,ATTR_TITLE * 256 + ' '
+    mov ax,ATTR_HEADING * 256 + ' '
     mov cx,80
     rep stosw
     xor di,di
-    mov ah,ATTR_TITLE
+    mov ah,ATTR_HEADING
     mov si,offset titleText
     call PutString
     mov si,offset hexText
@@ -1138,14 +1166,16 @@ RenderScreen proc
     je render_mode
     mov si,offset binText
 render_mode:
+    mov ah,ATTR_MODE
     call PutString
     cmp dirty,0
     je render_columns
+    mov ah,ATTR_HEADING
     mov si,offset changedText
     call PutString
 render_columns:
     mov di,160
-    mov ah,ATTR_OFFSET
+    mov ah,ATTR_COLUMN
     mov si,offset columnText
     call PutString
     mov di,160 + 61 * 2
@@ -1181,7 +1211,7 @@ render_next_byte:
     mov si,offset offsetText
     call PutString
     mov eax,cursorOffset
-    mov bl,ATTR_STATUS
+    mov bl,ATTR_VALUE
     call PutHex32
     mov ah,ATTR_STATUS
     mov si,offset sizeText
@@ -1194,11 +1224,11 @@ render_next_byte:
     mov eax,bufferCapacity
     call PutHex32
     mov di,23 * 160
-    mov ah,ATTR_NORMAL
+    mov ah,ATTR_SELECTED
     mov si,offset fileName
     call PutString
     mov di,24 * 160
-    mov ah,ATTR_STATUS
+    mov ah,ATTR_FOOTER
     mov si,statusText
     call PutString
     pop es
@@ -1280,7 +1310,7 @@ render_ascii_position:
 render_ascii_dot:
     mov al,'.'
 render_ascii_output:
-    mov ah,renderAttr
+    mov ah,ATTR_ASCII
     stosw
 render_byte_done:
     ret
@@ -1314,30 +1344,115 @@ PlaceCursor endp
 ; editor loop. DOS buffered console input is avoided in the video interface.
 ; ---------------------------------------------------------------------------
 HelpDialog proc
+    ; Hide the editing cursor while the modal is visible; preserve its shape.
+    mov ah,03h
+    xor bh,bh
+    int 10h
+    push cx
+    mov cx,2000h
+    mov ah,01h
+    int 10h
+    call RenderHelpWindow
+    xor ah,ah
+    int 16h
+    pop cx
+    mov ah,01h
+    int 10h
+    ret                           ; Main redraws the editor after dismissal
+HelpDialog endp
+
+; Centred, opaque CP437 text window. Each helpLines entry occupies one row.
+; Draw only inside the rectangle so the surrounding editor stays visible.
+RenderHelpWindow proc
     push es
     mov ax,0B800h
     mov es,ax
-    mov di,8 * 160
+    mov di,HELP_TOP * 160 + HELP_LEFT * 2
+    mov dx,HELP_HEIGHT
+help_clear_row:
+    mov ax,ATTR_NORMAL * 256 + ' '
+    mov cx,HELP_WIDTH
+    rep stosw
+    add di,(80 - HELP_WIDTH) * 2
+    dec dx
+    jnz help_clear_row
+
+    mov di,HELP_TOP * 160 + HELP_LEFT * 2
+    mov ax,ATTR_SELECTED * 256 + 218 ; upper-left corner
+    stosw
+    mov al,196                     ; horizontal rule
+    mov cx,HELP_WIDTH - 2
+    rep stosw
+    mov al,191                     ; upper-right corner
+    stosw
+    mov di,(HELP_TOP + 1) * 160 + HELP_LEFT * 2
+    mov cx,HELP_HEIGHT - 2
+    mov al,179                     ; vertical sides
+help_border_row:
+    mov es:[di],ax
+    mov es:[di + (HELP_WIDTH - 1) * 2],ax
+    add di,160
+    loop help_border_row
+    mov al,192                     ; lower-left corner
+    stosw
+    mov al,196
+    mov cx,HELP_WIDTH - 2
+    rep stosw
+    mov al,217                     ; lower-right corner
+    stosw
+
+    mov di,HELP_TOP * 160 + (HELP_LEFT + 3) * 2
+    mov si,offset helpTitle
+    call PutString
+    mov bx,offset helpLines
+    mov dx,(HELP_TOP + 2) * 160 + (HELP_LEFT + 2) * 2
+help_line:
+    mov si,[bx]
+    or si,si
+    jz help_return_prompt
+    mov di,dx
+    mov ah,ATTR_ASCII
+    call PutHelpLine
+    add bx,2
+    add dx,160
+    jmp help_line
+help_return_prompt:
+    mov di,(HELP_TOP + HELP_HEIGHT - 2) * 160 + (HELP_LEFT + 2) * 2
     mov ah,ATTR_TITLE
-    mov si,offset helpText1
-    call PutString
-    mov di,9 * 160
-    mov si,offset helpText2
-    call PutString
-    mov di,10 * 160
-    mov si,offset helpText3
-    call PutString
-    mov di,11 * 160
-    mov si,offset helpText4
-    call PutString
-    mov di,12 * 160
-    mov si,offset keysText
-    call PutString
-    xor ah,ah
-    int 16h
+    mov si,offset helpReturn
+    call PutHelpLine
     pop es
     ret
-HelpDialog endp
+RenderHelpWindow endp
+
+; Draw SI in AH, highlighting the key label before ':' in bright yellow.
+; A sentence with no colon stays entirely in its description colour.
+; Strings are fixed help text fitting within the modal's interior width.
+PutHelpLine proc
+    push si
+    push di
+    call PutString
+    pop di
+    pop si
+    xor cx,cx
+help_find_colon:
+    lodsb
+    or al,al
+    jz help_key_done
+    cmp al,':'
+    je help_colour_key
+    inc cx
+    jmp help_find_colon
+help_colour_key:
+    jcxz help_key_done
+    mov al,ATTR_HELP_KEY
+help_key_character:
+    mov es:[di+1],al
+    add di,2
+    loop help_key_character
+help_key_done:
+    ret
+PutHelpLine endp
 
 ; Clear rows 23/24, print SI prompt. ES is preserved.
 DialogPrompt proc
@@ -1345,7 +1460,7 @@ DialogPrompt proc
     mov ax,0B800h
     mov es,ax
     mov di,23 * 160
-    mov ax,ATTR_TITLE * 256 + ' '
+    mov ax,ATTR_FOOTER * 256 + ' '
     mov cx,160
     rep stosw
     mov di,23 * 160
@@ -1364,7 +1479,7 @@ save_as_redraw:
     mov ax,0B800h
     mov es,ax
     mov di,24 * 160
-    mov ax,ATTR_TITLE * 256 + ' '
+    mov ax,ATTR_FOOTER * 256 + ' '
     mov cx,80
     rep stosw
     mov di,24 * 160
@@ -1375,7 +1490,7 @@ save_as_redraw:
     sub bx,78
     add si,bx
 save_as_visible:
-    mov ah,ATTR_TITLE
+    mov ah,ATTR_SELECTED
     call PutString
     pop es
     mov dx,1800h

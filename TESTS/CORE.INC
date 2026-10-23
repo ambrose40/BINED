@@ -30,6 +30,7 @@ caseFull        db 'full-buffer and empty-file bounds',13,10,'$'
 caseNavigation  db 'navigation and viewport bounds',13,10,'$'
 caseStack       db '10000 dispatches preserve SP',13,10,'$'
 caseVideo       db 'hex/binary rendering, cursor and screen bounds',13,10,'$'
+caseHelp        db 'modal help layout, bounds and editor redraw',13,10,'$'
 caseFiles       db 'multi-chunk DOS save/load and safe replacement',13,10,'$'
 caseReadOnly    db 'read-only save must fail and retain dirty flag',13,10,'$'
 caseSetAttr     db 'DOS set read-only attribute',13,10,'$'
@@ -250,6 +251,7 @@ test_dispatch_loop:
     mov ax,0B800h
     mov es,ax
     mov word ptr es:[4000],0A55Ah
+    mov statusText,offset msgReady
     call EnsureVisible
     call RenderScreen
     cmp word ptr es:[4000],0A55Ah
@@ -257,6 +259,28 @@ test_dispatch_loop:
     cmp word ptr es:[2*160+10*2],0D41h  ; purple selected 'A', black background
     jne TestFailed
     cmp byte ptr es:[2*160+11*2],'5'
+    jne TestFailed
+    cmp word ptr es:[1*2],0F45h        ; bright-white title 'E'
+    jne TestFailed
+    cmp word ptr es:[(hexText-titleText-1)*2],0E48h ; yellow HEX mode 'H'
+    jne TestFailed
+    cmp word ptr es:[160+1*2],0C4Fh    ; bright-red OFFSET heading 'O'
+    jne TestFailed
+    cmp word ptr es:[160+10*2],0C44h   ; bright-red DATA heading 'D'
+    jne TestFailed
+    cmp word ptr es:[160+61*2],0C41h   ; bright-red ASCII heading 'A'
+    jne TestFailed
+    cmp word ptr es:[2*160+61*2],072Eh ; gray ASCII dot, even for selected byte
+    jne TestFailed
+    cmp word ptr es:[22*160+8*2],0530h  ; dark-purple Offset value
+    jne TestFailed
+    cmp word ptr es:[22*160+24*2+7*2],0531h ; dark-purple Size value: ...1
+    jne TestFailed
+    cmp byte ptr es:[22*160+44*2+1],05h ; dark-purple Capacity value
+    jne TestFailed
+    cmp word ptr es:[22*160],0A4Fh     ; green 'O' label
+    jne TestFailed
+    cmp word ptr es:[24*160],0746h     ; light-gray 'F' of F1 Help
     jne TestFailed
     mov ah,03h
     xor bh,bh
@@ -270,10 +294,59 @@ test_dispatch_loop:
     jne TestFailed
     cmp byte ptr es:[2*160+11*2],'0'
     jne TestFailed
+    cmp word ptr es:[(hexText-titleText-1)*2],0E42h ; yellow BIN mode 'B'
+    jne TestFailed
+    cmp word ptr es:[160+66*2],0C41h   ; red ASCII heading in binary mode
+    jne TestFailed
+    cmp word ptr es:[2*160+66*2],072Eh ; gray ASCII preview in binary mode
+    jne TestFailed
     mov cursorOffset,1
     call RenderScreen
     cmp word ptr es:[2*160+19*2],0D2Dh ; purple selected EOF '-', black background
     jne TestFailed
+
+    mov testCase,offset caseHelp
+    ; Marker inside must be cleared; markers immediately outside must survive.
+    mov word ptr es:[4*160+12*2],0F58h
+    mov word ptr es:[4*160+10*2],0F4Ch
+    mov word ptr es:[4*160+69*2],0F52h
+    call RenderHelpWindow
+    cmp word ptr es:[4*160+12*2],0A20h
+    jne TestFailed
+    cmp word ptr es:[4*160+10*2],0F4Ch
+    jne TestFailed
+    cmp word ptr es:[4*160+69*2],0F52h
+    jne TestFailed
+    cmp word ptr es:[3*160+11*2],0DDAh ; purple top-left border
+    jne TestFailed
+    cmp word ptr es:[21*160+68*2],0DD9h ; purple bottom-right border
+    jne TestFailed
+    cmp word ptr es:[5*160+13*2],0E41h ; yellow Arrows key label
+    jne TestFailed
+    cmp word ptr es:[6*160+13*2],0E50h ; yellow PgUp key label
+    jne TestFailed
+    cmp word ptr es:[7*160+13*2],0E48h ; yellow Home key label
+    jne TestFailed
+    cmp word ptr es:[5*160+21*2],076Dh ; light-gray 'm' in move description
+    jne TestFailed
+    cmp word ptr es:[10*160+13*2],0E30h ; yellow editable-digit key label
+    jne TestFailed
+    cmp word ptr es:[11*160+13*2],0741h ; no-colon EOF sentence stays light gray
+    jne TestFailed
+    cmp word ptr es:[20*160+13*2],0E41h ; yellow Any-key label
+    jne TestFailed
+    cmp word ptr es:[20*160+22*2],0272h ; dark-green 'r' in return prompt
+    jne TestFailed
+    cmp word ptr es:[4000],0A55Ah
+    jne TestFailed
+    call RenderScreen
+    cmp word ptr es:[3*160+11*2],0A20h ; help border removed on redraw
+    jne TestFailed
+    cmp word ptr es:[2*160+19*2],0D2Dh ; selected EOF restored
+    jne TestFailed
+    CHECK32 fileSize,1
+    CHECK32 cursorOffset,1
+    CHECKBYTE 0,0A5h
     call EndVideo
     mov videoActive,0
 

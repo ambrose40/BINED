@@ -73,3 +73,125 @@ introduced on 2026-10-23.
   DOS tests were not rerun for this commit-only task; earlier results remain
   documented in the preceding entries.
 - **Remaining:** Existing DOSBox attribute-reporting limitation is unchanged.
+
+## 2026-10-24 — Modal F1 help and status colours
+
+- **Request:** Redesign F1 help as a small modal pseudo text window with each
+  sentence on its own line; use dark purple for Offset/Size/Capacity values
+  and blue for the bottom sentence starting with `F1 Help`.
+- **Changes:** Updated `BINED3.ASM` with a centred, black-filled 58x19 help
+  window, purple CP437 border/title, 15 separate instruction lines, and an
+  any-key dismissal prompt. The cursor is hidden during help and its shape
+  restored afterward. Added VGA attributes `05h` for the three numeric values
+  and `01h` for the bottom status line. Updated `TESTS/CORE.INC` with palette,
+  help layout/bounds, clearing, and editor-redraw checks; updated `README.md`
+  and project memory. Rebuilt production/test artifacts under `BUILD`.
+- **Verification:** Ran the documented unattended DOSBox build and
+  `TESTS\TEST.BAT`; production/core/integration assembly had no errors or
+  warnings, core tests passed, and the actual release EXE passed help,
+  editing, save-as, and save-and-quit integration. Ran `python TESTS\VERIFY.PY`:
+  exact 131,089-byte round trip, empty output, `UI2.BIN` bytes `FF 44`, and
+  staging cleanup all passed. Source/documentation whitespace check passed.
+- **Remaining:** None for this request. Existing DOSBox mounted-drive
+  attribute-reporting limitation remains; reduced-memory and launcher-menu
+  automation were previously verified, not rerun for this changeset.
+
+## 2026-10-24 — Improve F1 help key/description contrast
+
+- **Request:** Give help key names and their descriptions contrasting colours,
+  suggesting bright-yellow keys or gray descriptions.
+- **Changes:** Added bright-yellow `ATTR_HELP_KEY` (`0Eh`) and `PutHelpLine`
+  in `BINED3.ASM` to highlight key labels before colons while keeping help
+  descriptions green. Made digit-input and any-key return text use matching
+  key labels; the EOF note stays green. Updated existing help video assertions
+  in `TESTS/CORE.INC`, `README.md`, and project memory. Rebuilt the editor and
+  test artifacts under `BUILD`.
+- **Verification:** Reran the documented unattended DOSBox build and
+  `TESTS\TEST.BAT`; core and release-EXE integration tests passed. Reran
+  `python TESTS\VERIFY.PY`; exact output bytes, staging cleanup and
+  warning-free assembly checks passed. Source/documentation whitespace check
+  passed.
+- **Remaining:** None for this request; existing DOSBox attribute-reporting
+  limitation remains.
+
+## 2026-10-24 — White headings, yellow mode, and gray ASCII preview
+
+- **Request:** Make heading text bright white, the selected HEX/BIN mode
+  bright yellow, and right-hand ASCII symbols light gray.
+- **Changes:** Added `ATTR_HEADING` (`0Fh`), `ATTR_MODE` (`0Eh`), and
+  `ATTR_ASCII` (`07h`) in `BINED3.ASM`. The editor title, modified marker,
+  and column headings use white; the current mode uses yellow; ASCII output
+  always uses light gray, including the selected byte's preview. Updated
+  existing rendering checks in `TESTS/CORE.INC`, `README.md`, and project
+  memory; rebuilt production/test artifacts under `BUILD`.
+- **Verification:** Reran the documented unattended DOSBox build and
+  `TESTS\TEST.BAT`; core rendering/colour checks and release-EXE integration
+  passed. Reran `python TESTS\VERIFY.PY`; warning-free assembly, exact output
+  bytes and staging cleanup passed. Source/documentation whitespace check
+  passed.
+- **Remaining:** None for this request; existing DOSBox attribute-reporting
+  limitation remains.
+
+## 2026-10-24 — Bright-red column labels
+
+- **Request:** Make OFFSET, DATA, and ASCII labels bright red.
+- **Changes:** Added `ATTR_COLUMN` (`0Ch`) in `BINED3.ASM` for the column
+  labels. Updated existing colour assertions in `TESTS/CORE.INC`, covering
+  all three labels and binary-mode ASCII, plus `README.md` and project memory.
+  Rebuilt production/test artifacts under `BUILD`.
+- **Verification:** Reran the unattended DOSBox build and `TESTS\TEST.BAT`;
+  core and release-EXE integration tests passed. Reran
+  `python TESTS\VERIFY.PY`; warning-free assembly, exact file bytes, and
+  staging cleanup passed. Source/documentation whitespace check passed.
+- **Remaining:** None for this request; existing DOSBox attribute-reporting
+  limitation remains.
+
+## 2026-10-24 — Document the user's latest colour edits
+
+- **Request:** Check recent user colour edits and update project memory and
+  README to match.
+- **Changes:** Reviewed `BINED3.ASM` constants and render/dialog paths.
+  Updated `README.md` and `.agents/PROJECT.md` for the light-gray footer,
+  help descriptions/EOF note, and Save As/unsaved-quit prompts, plus purple
+  filename and Save As input. Recorded current attribute reuse and the
+  remaining dark-green help return description. Preserved the user's source
+  edits and recorded that previous runtime results predate these changes.
+- **Verification:** Compared documentation with current constants,
+  `RenderScreen`, `RenderHelpWindow`, `DialogPrompt`, `SaveAsDialog`, and
+  existing colour assertions; reviewed documentation diffs and ran the
+  source/documentation whitespace check. No build or runtime/host tests were
+  run for this documentation-only changeset.
+- **Remaining:** `TESTS/CORE.INC` still expects the previous blue footer and
+  green help description/EOF colours; refresh those assertions before the
+  next test run. Existing DOSBox attribute-reporting limitation remains.
+
+## 2026-10-24 — Synchronize tests with the current light-gray palette
+
+- **Request:** Fix the stale footer and help-description colour assertions
+  identified during the documentation review.
+- **Changes:** Updated three assertions/comments in `TESTS/CORE.INC` to expect
+  light-gray `0746h` (footer `F`), `076Dh` (help description `m`), and `0741h`
+  (EOF note `A`). Rebuilt production/test artifacts under `BUILD`; updated
+  project memory to resolve the pending follow-up. README already describes
+  the current palette accurately.
+- **Verification:** Reran the documented unattended DOSBox build and
+  `TESTS\TEST.BAT`; core and actual release-EXE integration tests passed.
+  Reran `python TESTS\VERIFY.PY`; warning-free assembly, exact output bytes,
+  and staging cleanup passed. Source/documentation whitespace check passed.
+- **Remaining:** None for this request; existing DOSBox attribute-reporting
+  limitation remains.
+
+## 2026-10-24 — Package the help/palette update for commit
+
+- **Request:** Commit the completed work using a commit-message convention.
+- **Changes:** Prepared the modal F1 help, final user palette, updated colour
+  assertions, README/project memory, and tracked rebuilt `BUILD` artifacts as
+  one changeset with message `feat(ui): redesign F1 help and refine editor colours`.
+  Recorded Conventional Commits as the user's commit-message preference.
+- **Verification:** Reviewed Git status, recent history, source/test/docs and
+  generated log/map diffs, and listing palette entries. Source/documentation
+  whitespace check passed. DOS tests and Python byte verification were already
+  run successfully in the preceding assertion-fix changeset; no runtime tests
+  were repeated for this commit-only task.
+- **Remaining:** None for packaging; existing DOSBox attribute-reporting
+  limitation remains.

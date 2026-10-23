@@ -1,6 +1,6 @@
 # EZ Binary Editor: project memory
 
-Last updated: 2026-10-23.
+Last updated: 2026-10-24.
 
 ## Purpose and user preferences
 
@@ -16,8 +16,19 @@ Persistent user requirements:
 - Preserve intermediate debugging sources for later reference, including
   sources stored under `BUILD`; do not blanket-clean that directory.
 - Use green over black, dark-green secondary text, and purple highlights.
+- Main title is bright white; OFFSET/DATA/ASCII column labels are bright red.
+  The active HEX/BIN label is bright yellow, and all right-hand ASCII preview
+  symbols are light gray (including the selected byte); hex/binary selection
+  remains purple.
+  The filename and Save As input are purple; the bottom status line and
+  Save As/unsaved-quit prompts are light gray.
+- F1 help uses a centred, bordered modal text window with one instruction
+  per line, bright-yellow key names, and light-gray descriptions/EOF note.
+  The any-key return description stays dark green.
+  Offset/Size/Capacity numeric values are dark purple.
 - Update this memory and the changelog after every changeset; root
   `AGENTS.md` makes that instruction discoverable for future agents.
+- Use Conventional Commits messages (`type(scope): summary`) when committing.
 
 ## Active files
 
@@ -49,6 +60,9 @@ including those historical deletions, build/test artifacts, debugging sources,
 and sample binaries. The original Git baseline is `70fb131` (initial legacy
 code). Preserve explicitly staged user files when preparing such a commit;
 do not silently discard generated artifacts or debugging references.
+The modal-help/palette update is packaged together with its regression checks,
+README/memory updates, and the already-tracked rebuilt EXE/OBJ/LST/MAP/log
+artifacts under `BUILD`, using a `feat(ui)` Conventional Commits message.
 
 ## Architecture and invariants
 
@@ -83,14 +97,40 @@ The `ATTR_*` constants near the top of `BINED3.ASM` define VGA text attributes:
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
-| `ATTR_NORMAL` | `0Ah` | Bright-green data, ASCII preview, filename |
-| `ATTR_TITLE` | `02h` | Dark-green title/dialogs |
-| `ATTR_OFFSET` | `02h` | Dark-green offsets/headings |
-| `ATTR_SELECTED` | `0Dh` | Purple selected byte and EOF marker |
-| `ATTR_STATUS` | `0Ah` | Bright-green position/size/status |
+| `ATTR_NORMAL` | `0Ah` | Bright-green hex/binary data and default screen/help fill |
+| `ATTR_TITLE` | `02h` | Dark-green F1 any-key return description |
+| `ATTR_OFFSET` | `02h` | Dark-green row offsets |
+| `ATTR_SELECTED` | `0Dh` | Purple selected byte/EOF, filename, Save As input, help border/title |
+| `ATTR_STATUS` | `0Ah` | Bright-green Offset/Size/Capacity labels |
+| `ATTR_VALUE` | `05h` | Dark-purple Offset/Size/Capacity numeric values |
+| `ATTR_FOOTER` | `07h` | Light-gray bottom status line and Save As/unsaved-quit prompts/fill |
+| `ATTR_HELP_KEY` | `0Eh` | Bright-yellow key names in F1 help |
+| `ATTR_HEADING` | `0Fh` | Bright-white editor title |
+| `ATTR_COLUMN` | `0Ch` | Bright-red OFFSET/DATA/ASCII column labels |
+| `ATTR_MODE` | `0Eh` | Bright-yellow active HEX/BIN label |
+| `ATTR_ASCII` | `07h` | Light-gray ASCII preview (including selection) and F1 descriptions/EOF note |
 
 All backgrounds are black. Existing video assertions check selected `A` as
-`0D41h` and selected EOF `-` as `0D2Dh`.
+`0D41h` and selected EOF `-` as `0D2Dh`. Additional assertions cover numeric
+value and footer colours, preserving the green labels.
+The current source also uses `ATTR_FOOTER` to fill rows 23/24 in
+`DialogPrompt` and row 24 during Save As input; prompt text inherits that
+attribute, while the typed path uses `ATTR_SELECTED`.
+
+### F1 help window
+
+`HelpDialog` hides the hardware editing cursor, calls `RenderHelpWindow`,
+consumes one BIOS key, restores the cursor shape, and returns to Main for
+the normal editor redraw. It does not modify file contents or navigation.
+`RenderHelpWindow` clears only a centred 58-column by 19-row rectangle at
+column 11, row 3 (zero-based), then draws a purple CP437 border/title,
+15 instruction lines with yellow key names and light-gray descriptions,
+and an any-key return prompt with a yellow key label/dark-green description.
+The `helpLines` pointer table places one instruction/sentence on each row.
+`PutHelpLine` draws each string in its description colour, then highlights
+the key label before the colon using `ATTR_HELP_KEY`; sentences without a
+colon (the EOF note) stay light gray. The digit-input line uses a colon-delimited
+key label too.
 
 ## Build, execute, and test
 
@@ -131,22 +171,33 @@ with this bundled environment.
 
 ### Coverage and last verified results
 
-Last runtime verification was the palette/debug-source changeset on
-2026-10-23, before the documentation-only memory changeset:
+Last runtime verification was the palette-assertion synchronization changeset
+on 2026-10-24, after the user's gray-footer/help and purple-filename/input
+edits. `TESTS/CORE.INC` now expects light-gray `0746h` for the footer `F` and
+`076Dh`/`0741h` for help description/EOF text. The stale-colour follow-up is
+resolved; the DOS suite and host byte verification passed with this palette.
 
-- Production, test, and restored debugging sources assembled without warnings.
-- Core tests and release EXE integration passed via launcher option 6.
+- Production and test sources assembled without warnings with bundled
+  TASM/TLINK. Preserved debugging sources were not rebuilt for this changeset.
+- Core tests and release EXE integration passed via the unattended DOSBox
+  build/test command above.
 - Core coverage includes parsing, hex/binary editing, EOF/full/empty bounds,
   cross-64-KiB insertion/deletion, navigation, rendering/cursor bounds,
   10,000 dispatch cycles (60,000 key events) with unchanged SP, multi-chunk
-  I/O, replacement saves, capacity rejection, and short-read errors.
+  I/O, replacement saves, capacity rejection, and short-read errors. New
+  checks cover status colours, modal help border/line layout, interior
+  clearing, unchanged surrounding cells, and editor redraw without data edits.
+  Help colour assertions also check yellow key names, light-gray descriptions,
+  the digit-input label, the light-gray EOF note, and the return prompt.
+  Main-view assertions check the white title, red column labels, yellow HEX and BIN
+  labels, and gray ASCII preview symbols in both display modes.
 - Release integration exercises help, hex/binary input, insert/delete,
   save-as, and save-and-quit using the actual production EXE.
 - Python verified `ROUND.BIN` (131,089 pattern bytes), `EMPTY.BIN` (empty),
   `UI2.BIN` (`FF 44`), absent `UI.BIN`, and no test-directory staging leftovers.
 - Expected `ROUND.BIN` SHA-256:
   `555e538c02e4151ffb942d0227251d8a8d585368c7bf68c9e58ffac233281fdf`.
-- Earlier reduced-memory checks passed with 256 KiB reserved by LOADFIX;
+- Earlier (2026-10-23) reduced-memory checks passed with 256 KiB reserved by LOADFIX;
   with 500 KiB reserved, the production editor rejected the round-trip file
   with the expected capacity error.
 

@@ -112,7 +112,7 @@ details.
 | Space / Backspace | Next / previous byte |
 | Insert | Insert a zero byte before the cursor |
 | Delete | Remove the byte at the cursor |
-| F1 | Help; any key returns |
+| F1 | Open the centred help window; any key returns |
 | F2 | Save |
 | F4 | Save as; Enter accepts, Esc cancels |
 | Esc | Quit; modified files prompt for Save, Discard, or Esc to cancel |
@@ -121,10 +121,22 @@ The selected byte is highlighted. Hex mode shows 16 bytes per row; binary
 mode shows 6. Both include a printable ASCII preview. Offsets, file size and
 buffer capacity are displayed in **hexadecimal**.
 
-The editor uses the original **green-on-black** theme: bright-green data and
-status text, dark-green headings/offsets/dialogs, and purple selected-byte
-highlights. All backgrounds stay black. The five `ATTR_*` constants near the
-top of `BINED3.ASM` define the palette using standard VGA text attributes.
+The editor uses a **green-on-black** theme: bright-green hex/binary data and
+status labels, dark-green row offsets, and purple selected-byte highlights in
+the hex/binary data. The **filename and Save As input are also purple**.
+The editor title is **bright white**,
+the **OFFSET, DATA, and ASCII column labels are bright red**,
+the active **HEX/BIN mode is bright yellow**, and the
+right-hand **ASCII preview is light gray**, including the selected byte.
+The numeric **Offset, Size, and Capacity values are dark purple**;
+the **bottom status line and Save As/unsaved-quit prompts are light gray**.
+F1 opens a centred, black-filled window
+with a purple border, one help instruction per line, bright-yellow key names
+contrasting with light-gray descriptions (including the EOF note), and an
+any-key dismissal prompt with a yellow key label and dark-green description.
+The editing cursor is hidden while help is open. All backgrounds stay
+black. The `ATTR_*` constants near the top of `BINED3.ASM` define the palette
+using standard VGA text attributes.
 
 The `--` / `--------` entry marks EOF. Typing there appends a zero-initialized
 byte and changes its selected digit/bit. Typing within the file preserves the
@@ -239,7 +251,8 @@ python TESTS\VERIFY.PY
 The tests generate artifacts only under `BUILD`. The procedure-level test
 EXE exercises command tails, EOF editing, hex/binary conversion, full/empty
 bounds, insert/delete across 64 KiB, navigation, 10,000 dispatch cycles
-(60,000 key events) with unchanged SP, screen bounds/cursor rendering, a
+(60,000 key events) with unchanged SP, screen bounds/cursor rendering,
+status colours, modal help layout/bounds and editor redraw, a
 131,089-byte disk round trip, replacement saves, oversized loads and short
 reads. It requires at least 131,089 bytes of available file-buffer memory.
 
