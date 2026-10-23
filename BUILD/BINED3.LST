@@ -1,0 +1,2054 @@
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 1
+BINED3.ASM
+
+
+
+      1					 ; EZ Binary Editor 3 -- TASM, 486 real-mode DOS EXE (small-style layout).
+      2					 ;
+      3					 ; Assemble: TASM /m2 BINED3.ASM,BUILD\
+      4					 ; Link:     TLINK /m BUILD\BINED3.OBJ,BUILD\BINED3.EXE
+      5					 ;
+      6					 ; The memory model and	instruction set	are independent. Explicit USE16
+      7					 ; segments permit 32-bit registers without generating 32-bit DOS segments.
+      8					 ; DS always addresses DGROUP except inside the	bounded	DOS transfer below.
+      9					 ; File	bytes live only	in a DOS-owned allocation, never in screen memory.
+     10					 ; Unless stated otherwise, general registers and FS are scratch. DS/ES	and
+     11					 ; the direction flag are preserved by procedures (DF is always	clear).
+     12
+     13					 P486				   ; TASM 2.5 spelling of the .486 directive
+     14					 DOSSEG
+     15
+     16		  = 1000		 STACK_BYTES	 equ 4096
+     17		  = 8000		 MAX_PARAGRAPHS	 equ 8000h	    ; 512 KiB, subject to conventional memory
+     18		  = 4000		 IO_CHUNK	 equ 4000h	    ; never cross a 64 KiB segment boundary
+     19		  = 0080		 PATH_BYTES	 equ 128
+     20		  = 0014		 DATA_ROWS	 equ 20
+     21		  = 0002		 DATA_TOP	 equ 2
+     22		  = 000A		 DATA_COLUMN	 equ 10
+     23					 ; VGA text attributes:	background in the high nibble, foreground in the low.
+     24					 ; Keep	every background black;	02h is dark green, 0Ah bright green, 0Dh purple.
+     25		  = 000A		 ATTR_NORMAL	 equ 0Ah	   ; file bytes, ASCII preview,	filename
+     26		  = 0002		 ATTR_TITLE	 equ 02h	   ; dark-green	title and dialog text
+     27		  = 0002		 ATTR_OFFSET	 equ 02h	   ; dark-green	offsets	and column headings
+     28		  = 000D		 ATTR_SELECTED	 equ 0Dh	   ; purple selected byte / EOF	marker
+     29		  = 000A		 ATTR_STATUS	 equ 0Ah	   ; green position, size and status messages
+     30
+     31	    0000			 _STACK	segment	para stack use16 'STACK'
+     32	    0000  1000*(??)		     db	STACK_BYTES dup	(?)
+     33	    1000			 _STACK	ends
+     34
+     35					 DGROUP	group _DATA
+     36	    0000			 _DATA segment word public use16 'DATA'
+     37	    0000  0000			 pspSegment	 dw 0
+     38	    0002  0000			 bufferSegment	 dw 0
+     39	    0004  00000000		 bufferCapacity	 dd 0
+     40	    0008  00000000		 fileSize	 dd 0
+     41	    000C  00000000		 cursorOffset	 dd 0		    ; may equal	fileSize: the append position
+     42	    0010  00000000		 viewOffset	 dd 0		    ; row-aligned logical offset
+     43	    0014  00			 editMode	 db 0		    ; 0	= hexadecimal, 1 = binary
+     44	    0015  00			 digitIndex	 db 0		    ; high nibble/most significant bit first
+     45	    0016  02			 digitsPerByte	 db 2
+     46	    0017  00000010		 bytesPerRow	 dd 16
+     47	    001B  00000140		 pageBytes	 dd DATA_ROWS *	16
+     48	    001F  00			 dirty		 db 0
+     49	    0020  00			 quitRequested	 db 0
+     50	    0021  00			 exitCode	 db 0
+     51	    0022  00			 videoActive	 db 0
+     52	    0023  03			 oldVideoMode	 db 3
+     53	    0024  00			 oldVideoPage	 db 0
+     54	    0025  0607			 oldCursorShape	 dw 0607h
+     55	    0027  0000			 oldCursorPos	 dw 0
+     56	    0029  0493r			 statusText	 dw offset msgReady
+     57	    002B  55 4E	54 49 54 4C 45+	 fileName	 db 'UNTITLED.BIN',0,115 dup (0)
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 2
+BINED3.ASM
+
+
+
+     58		  44 2E	42 49 4E 00   +
+     59		  73*(00)
+     60	    00AB  80*(00)		 inputPath	 db PATH_BYTES dup (0)
+     61	    012B  90*(00)		 stagePath	 db PATH_BYTES + 16 dup	(0)
+     62	    01BB  90*(00)		 backupPath	 db PATH_BYTES + 16 dup	(0)
+     63	    024B  0000			 saveTarget	 dw 0
+     64	    024D  00			 backupExists	 db 0
+     65	    024E  00			 stageExists	 db 0
+     66	    024F  FFFF			 fileHandle	 dw 0FFFFh
+     67	    0251  00000000		 ioRemaining	 dd 0
+     68	    0255  00000000		 ioOffset	 dd 0
+     69	    0259  0000			 ioCount	 dw 0
+     70	    025B  3F			 ioOperation	 db 3Fh
+     71	    025C  0000			 lastError	 dw 0
+     72	    025E  00000000		 renderOffset	 dd 0
+     73	    0262  0000			 renderRow	 dw 0
+     74	    0264  0000			 renderColumn	 dw 0
+     75	    0266  00			 renderValue	 db 0
+     76	    0267  00			 renderAttr	 db 0
+     77	    0268  0000			 dialogLength	 dw 0
+     78	    026A  30 31	32 33 34 35 36+	 hexDigits	 db '0123456789ABCDEF'
+     79		  37 38	39 41 42 43 44+
+     80		  45 46
+     81	    027A  20 45	5A 20 42 69 6E+	 titleText	 db ' EZ Binary	Editor 3 | 486 real mode | ',0
+     82		  61 72	79 20 45 64 69+
+     83		  74 6F	72 20 33 20 7C+
+     84		  20 34	38 36 20 72 65+
+     85		  61 6C	20 6D 6F 64 65+
+     86		  20 7C	20 00
+     87	    02A1  48 45	58 00		 hexText	 db 'HEX',0
+     88	    02A5  42 49	4E 00		 binText	 db 'BIN',0
+     89	    02A9  20 2A	6D 6F 64 69 66+	 changedText	 db ' *modified*',0
+     90		  69 65	64 2A 00
+     91	    02B5  20 4F	46 46 53 45 54+	 columnText	 db ' OFFSET   DATA',0
+     92		  20 20	20 44 41 54 41+
+     93		  00
+     94	    02C4  41 53	43 49 49 00	 asciiText	 db 'ASCII',0
+     95	    02CA  4F 66	66 73 65 74 3A+	 offsetText	 db 'Offset: ',0
+     96		  20 00
+     97	    02D3  20 20	53 69 7A 65 3A+	 sizeText	 db '  Size: ',0
+     98		  20 00
+     99	    02DC  20 20	43 61 70 61 63+	 capacityText	 db '  Capacity: ',0
+    100		  69 74	79 3A 20 00
+    101	    02E9  46 31	20 48 65 6C 70+	 keysText	 db 'F1	Help  F2 Save  F4 Save as  F5 BIN  F6 HEX  Tab Mode  Esc Quit',0
+    102		  20 20	46 32 20 53 61+
+    103		  76 65	20 20 46 34 20+
+    104		  53 61	76 65 20 61 73+
+    105		  20 20	46 35 20 42 49+
+    106		  4E 20	20 46 36 20 48+
+    107		  45 58	20 20 54 61 62+
+    108		  20 4D	6F 64 65 20 20+
+    109		  45 73	63 20 51 75 69+
+    110		  74 00
+    111	    032A  41 72	72 6F 77 73 3A+	 helpText1	 db 'Arrows: move digits/rows. PgUp/PgDn: page.	Home/End: row start/end.',0
+    112		  20 6D	6F 76 65 20 64+
+    113		  69 67	69 74 73 2F 72+
+    114		  6F 77	73 2E 20 50 67+
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 3
+BINED3.ASM
+
+
+
+    115		  55 70	2F 50 67 44 6E+
+    116		  3A 20	70 61 67 65 2E+
+    117		  20 48	6F 6D 65 2F 45+
+    118		  6E 64	3A 20 72 6F 77+
+    119		  20 73	74 61 72 74 2F+
+    120		  65 6E	64 2E 00
+    121	    036E  43 74	72 6C 2D 48 6F+	 helpText2	 db 'Ctrl-Home/End: file start/EOF. Ins: insert	00. Del: delete	byte.',0
+    122		  6D 65	2F 45 6E 64 3A+
+    123		  20 66	69 6C 65 20 73+
+    124		  74 61	72 74 2F 45 4F+
+    125		  46 2E	20 49 6E 73 3A+
+    126		  20 69	6E 73 65 72 74+
+    127		  20 30	30 2E 20 44 65+
+    128		  6C 3A	20 64 65 6C 65+
+    129		  74 65	20 62 79 74 65+
+    130		  2E 00
+    131	    03AF  54 79	70 65 20 30 2D+	 helpText3	 db 'Type 0-9,A-F (hex)	or 0,1 (binary). At EOF, typing	appends	a byte.',0
+    132		  39 2C	41 2D 46 20 28+
+    133		  68 65	78 29 20 6F 72+
+    134		  20 30	2C 31 20 28 62+
+    135		  69 6E	61 72 79 29 2E+
+    136		  20 41	74 20 45 4F 46+
+    137		  2C 20	74 79 70 69 6E+
+    138		  67 20	61 70 70 65 6E+
+    139		  64 73	20 61 20 62 79+
+    140		  74 65	2E 00
+    141	    03F2  53 70	61 63 65 3A 20+	 helpText4	 db 'Space: next byte. Backspace: previous byte. Any key returns.',0
+    142		  6E 65	78 74 20 62 79+
+    143		  74 65	2E 20 42 61 63+
+    144		  6B 73	70 61 63 65 3A+
+    145		  20 70	72 65 76 69 6F+
+    146		  75 73	20 62 79 74 65+
+    147		  2E 20	41 6E 79 20 6B+
+    148		  65 79	20 72 65 74 75+
+    149		  72 6E	73 2E 00
+    150	    042F  53 61	76 65 20 61 73+	 saveAsText	 db 'Save as (Esc cancels, Enter accepts):',0
+    151		  20 28	45 73 63 20 63+
+    152		  61 6E	63 65 6C 73 2C+
+    153		  20 45	6E 74 65 72 20+
+    154		  61 63	63 65 70 74 73+
+    155		  29 3A	00
+    156	    0455  55 6E	73 61 76 65 64+	 quitText	 db 'Unsaved changes: S	= save and quit, D = discard, Esc = cancel',0
+    157		  20 63	68 61 6E 67 65+
+    158		  73 3A	20 53 20 3D 20+
+    159		  73 61	76 65 20 61 6E+
+    160		  64 20	71 75 69 74 2C+
+    161		  20 44	20 3D 20 64 69+
+    162		  73 63	61 72 64 2C 20+
+    163		  45 73	63 20 3D 20 63+
+    164		  61 6E	63 65 6C 00
+    165	    0493  46 31	20 48 65 6C 70+	 msgReady	 db 'F1	Help | Sizes/offsets are hex. EOF is an	append position.',0
+    166		  20 7C	20 53 69 7A 65+
+    167		  73 2F	6F 66 66 73 65+
+    168		  74 73	20 61 72 65 20+
+    169		  68 65	78 2E 20 45 4F+
+    170		  46 20	69 73 20 61 6E+
+    171		  20 61	70 70 65 6E 64+
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 4
+BINED3.ASM
+
+
+
+    172		  20 70	6F 73 69 74 69+
+    173		  6F 6E	2E 00
+    174	    04CF  4E 65	77 20 66 69 6C+	 msgNew		 db 'New file. Type to append bytes, then F2 to	save.',0
+    175		  65 2E	20 54 79 70 65+
+    176		  20 74	6F 20 61 70 70+
+    177		  65 6E	64 20 62 79 74+
+    178		  65 73	2C 20 74 68 65+
+    179		  6E 20	46 32 20 74 6F+
+    180		  20 73	61 76 65 2E 00
+    181	    0500  53 61	76 65 64 2E 00	 msgSaved	 db 'Saved.',0
+    182	    0507  42 75	66 66 65 72 20+	 msgFull	 db 'Buffer full: delete bytes or save the file.',0
+    183		  66 75	6C 6C 3A 20 64+
+    184		  65 6C	65 74 65 20 62+
+    185		  79 74	65 73 20 6F 72+
+    186		  20 73	61 76 65 20 74+
+    187		  68 65	20 66 69 6C 65+
+    188		  2E 00
+    189	    0533  53 61	76 65 20 66 61+	 msgSaveError	 db 'Save failed. Original retained; any recovery files	are beside it.',0
+    190		  69 6C	65 64 2E 20 4F+
+    191		  72 69	67 69 6E 61 6C+
+    192		  20 72	65 74 61 69 6E+
+    193		  65 64	3B 20 61 6E 79+
+    194		  20 72	65 63 6F 76 65+
+    195		  72 79	20 66 69 6C 65+
+    196		  73 20	61 72 65 20 62+
+    197		  65 73	69 64 65 20 69+
+    198		  74 2E	00
+    199	    0575  53 61	76 65 20 66 61+	 msgReadOnly	 db 'Save failed: target is read-only or a directory.',0
+    200		  69 6C	65 64 3A 20 74+
+    201		  61 72	67 65 74 20 69+
+    202		  73 20	72 65 61 64 2D+
+    203		  6F 6E	6C 79 20 6F 72+
+    204		  20 61	20 64 69 72 65+
+    205		  63 74	6F 72 79 2E 00
+    206	    05A6  45 5A	20 42 69 6E 61+	 usageText	 db 'EZ	Binary Editor 3	(486+, DOS 3.0+)',13,10
+    207		  72 79	20 45 64 69 74+
+    208		  6F 72	20 33 20 28 34+
+    209		  38 36	2B 2C 20 44 4F+
+    210		  53 20	33 2E 30 2B 29+
+    211		  0D 0A
+    212	    05CB  55 73	61 67 65 3A 20+			 db 'Usage: BINED3 [filename]',13,10
+    213		  42 49	4E 45 44 33 20+
+    214		  5B 66	69 6C 65 6E 61+
+    215		  6D 65	5D 0D 0A
+    216	    05E5  20 20	20 20 20 20 20+			 db '	    BINED3 "path with spaces"',13,10
+    217		  42 49	4E 45 44 33 20+
+    218		  22 70	61 74 68 20 77+
+    219		  69 74	68 20 73 70 61+
+    220		  63 65	73 22 0D 0A
+    221	    0607  4D 69	73 73 69 6E 67+			 db 'Missing files start empty.	F1: help, F2: save, Esc: quit.',13,10,'$'
+    222		  20 66	69 6C 65 73 20+
+    223		  73 74	61 72 74 20 65+
+    224		  6D 70	74 79 2E 20 46+
+    225		  31 3A	20 68 65 6C 70+
+    226		  2C 20	46 32 3A 20 73+
+    227		  61 76	65 2C 20 45 73+
+    228		  63 3A	20 71 75 69 74+
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 5
+BINED3.ASM
+
+
+
+    229		  2E 0D	0A 24
+    230	    0643  49 6E	76 61 6C 69 64+	 argumentError	 db 'Invalid command line. Supply one filename (quote spaces).',13,10,'$'
+    231		  20 63	6F 6D 6D 61 6E+
+    232		  64 20	6C 69 6E 65 2E+
+    233		  20 53	75 70 70 6C 79+
+    234		  20 6F	6E 65 20 66 69+
+    235		  6C 65	6E 61 6D 65 20+
+    236		  28 71	75 6F 74 65 20+
+    237		  73 70	61 63 65 73 29+
+    238		  2E 0D	0A 24
+    239	    067F  4E 6F	74 20 65 6E 6F+	 memoryError	 db 'Not enough	conventional DOS memory.',13,10,'$'
+    240		  75 67	68 20 63 6F 6E+
+    241		  76 65	6E 74 69 6F 6E+
+    242		  61 6C	20 44 4F 53 20+
+    243		  6D 65	6D 6F 72 79 2E+
+    244		  0D 0A	24
+    245	    06A5  43 61	6E 6E 6F 74 20+	 loadError	 db 'Cannot load file (DOS error or incomplete read).',13,10,'$'
+    246		  6C 6F	61 64 20 66 69+
+    247		  6C 65	20 28 44 4F 53+
+    248		  20 65	72 72 6F 72 20+
+    249		  6F 72	20 69 6E 63 6F+
+    250		  6D 70	6C 65 74 65 20+
+    251		  72 65	61 64 29 2E 0D+
+    252		  0A 24
+    253	    06D8  46 69	6C 65 20 65 78+	 largeError	 db 'File exceeds available editor buffer (at most 512 KiB).',13,10,'$'
+    254		  63 65	65 64 73 20 61+
+    255		  76 61	69 6C 61 62 6C+
+    256		  65 20	65 64 69 74 6F+
+    257		  72 20	62 75 66 66 65+
+    258		  72 20	28 61 74 20 6D+
+    259		  6F 73	74 20 35 31 32+
+    260		  20 4B	69 42 29 2E 0D+
+    261		  0A 24
+    262
+    263	    0712			 _DATA ends
+    264	    0000			 _TEXT segment word public use16 'CODE'
+    265					 assume	cs:_TEXT, ds:DGROUP
+    266
+    267					 ; ---------------------------------------------------------------------------
+    268					 ; Startup and lifetime. Only Main owns	the event loop and termination.
+    269					 ; DOSSEG puts the stack last: shrink the PSP block through its	END,
+    270					 ; not through the current SP. DOS can then allocate the released paragraphs.
+    271					 ; ---------------------------------------------------------------------------
+    272	    0000			 Main proc
+    273	    0000  B8 0000s		     mov ax,DGROUP
+    274	    0003  8E D8			     mov ds,ax
+    275	    0005  8C 06	0000r		     mov pspSegment,es
+    276	    0009  FC			     cld
+    277	    000A  E8 0075		     call AllocateBuffer
+    278	    000D  73 05			     jnc main_memory_ready
+    279	    000F  BA 067Fr		     mov dx,offset memoryError
+    280	    0012  EB 45			     jmp FatalError
+    281	    0014			 main_memory_ready:
+    282	    0014  E8 00D6		     call ParseCommandLine
+    283	    0017  73 13			     jnc main_arguments_ready
+    284	    0019  3D 0001		     cmp ax,1
+    285	    001C  74 05			     je	main_help
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 6
+BINED3.ASM
+
+
+
+    286	    001E  BA 0643r		     mov dx,offset argumentError
+    287	    0021  EB 36			     jmp FatalError
+    288	    0023			 main_help:
+    289	    0023  BA 05A6r		     mov dx,offset usageText
+    290	    0026  B4 09			     mov ah,09h
+    291	    0028  CD 21			     int 21h
+    292	    002A  EB 38			     jmp Shutdown
+    293	    002C			 main_arguments_ready:
+    294	    002C  E8 016A		     call LoadFile
+    295	    002F  73 0F			     jnc main_loaded
+    296	    0031  3D 0008		     cmp ax,8
+    297	    0034  75 05			     jne main_load_error
+    298	    0036  BA 06D8r		     mov dx,offset largeError
+    299	    0039  EB 1E			     jmp FatalError
+    300	    003B			 main_load_error:
+    301	    003B  BA 06A5r		     mov dx,offset loadError
+    302	    003E  EB 19			     jmp FatalError
+    303	    0040			 main_loaded:
+    304	    0040  E8 0724		     call BeginVideo
+    305	    0043			 main_event_loop:
+    306	    0043  E8 0554		     call EnsureVisible
+    307	    0046  E8 07C9		     call RenderScreen
+    308	    0049  32 E4			     xor ah,ah
+    309	    004B  CD 16			     int 16h
+    310	    004D  E8 05A5		     call HandleKey
+    311	    0050  80 3E	0020r 00	     cmp quitRequested,0
+    312	    0055  74 EC			     je	main_event_loop
+    313	    0057  EB 0B			     jmp Shutdown
+    314	    0059			 Main endp
+    315
+    316	    0059			 FatalError proc
+    317	    0059  B4 09			     mov ah,09h
+    318	    005B  CD 21			     int 21h
+    319	    005D  C6 06	0021r 01	     mov exitCode,1
+    320	    0062  EB 00			     jmp Shutdown
+    321	    0064			 FatalError endp
+    322
+    323	    0064			 Shutdown proc
+    324	    0064  80 3E	0022r 00	     cmp videoActive,0
+    325	    0069  74 03			     je	shutdown_memory
+    326	    006B  E8 0722		     call EndVideo
+    327	    006E			 shutdown_memory:
+    328	    006E  A1 0002r		     mov ax,bufferSegment
+    329	    0071  0B C0			     or	ax,ax
+    330	    0073  74 06			     jz	shutdown_exit
+    331	    0075  8E C0			     mov es,ax
+    332	    0077  B4 49			     mov ah,49h
+    333	    0079  CD 21			     int 21h
+    334	    007B			 shutdown_exit:
+    335	    007B  A0 0021r		     mov al,exitCode
+    336	    007E  B4 4C			     mov ah,4Ch
+    337	    0080  CD 21			     int 21h
+    338	    0082			 Shutdown endp
+    339
+    340	    0082			 AllocateBuffer	proc
+    341	    0082  06			     push es
+    342	    0083  8C D0			     mov ax,ss
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 7
+BINED3.ASM
+
+
+
+    343	    0085  05 0100		     add ax,STACK_BYTES	/ 16
+    344	    0088  2B 06	0000r		     sub ax,pspSegment
+    345	    008C  8B D8			     mov bx,ax
+    346	    008E  8E 06	0000r		     mov es,pspSegment
+    347	    0092  B4 4A			     mov ah,4Ah
+    348	    0094  CD 21			     int 21h
+    349	    0096  72 25			     jc	allocate_failed
+    350	    0098  BB 8000		     mov bx,MAX_PARAGRAPHS
+    351	    009B  B4 48			     mov ah,48h
+    352	    009D  CD 21			     int 21h
+    353	    009F  73 0A			     jnc allocate_success
+    354					     ; On insufficient memory DOS returns its largest free block in BX.
+    355	    00A1  0B DB			     or	bx,bx
+    356	    00A3  74 18			     jz	allocate_failed
+    357	    00A5  B4 48			     mov ah,48h
+    358	    00A7  CD 21			     int 21h
+    359	    00A9  72 12			     jc	allocate_failed
+    360	    00AB			 allocate_success:
+    361	    00AB  A3 0002r		     mov bufferSegment,ax
+    362	    00AE  66| 0F B7 C3		     movzx eax,bx
+    363	    00B2  66| C1 E0 04		     shl eax,4
+    364	    00B6  66| A3 0004r		     mov bufferCapacity,eax
+    365	    00BA  07			     pop es
+    366	    00BB  F8			     clc
+    367	    00BC  C3			     ret
+    368	    00BD			 allocate_failed:
+    369	    00BD  07			     pop es
+    370	    00BE  F9			     stc
+    371	    00BF  C3			     ret
+    372	    00C0			 AllocateBuffer	endp
+    373
+    374					 ; EAX = logical byte offset ->	FS:BX, with BX in 0..15.
+    375					 ; Callers enforce offset < bufferCapacity. Preserves EAX and EDX.
+    376	    00C0			 MapBuffer proc
+    377	    00C0  66| 52		     push edx
+    378	    00C2  66| 8B D0		     mov edx,eax
+    379	    00C5  66| C1 EA 04		     shr edx,4
+    380	    00C9  03 16	0002r		     add dx,bufferSegment
+    381	    00CD  8E E2			     mov fs,dx
+    382	    00CF  8B D8			     mov bx,ax
+    383	    00D1  83 E3	0F		     and bx,000Fh
+    384	    00D4  66| 5A		     pop edx
+    385	    00D6  C3			     ret
+    386	    00D7			 MapBuffer endp
+    387
+    388					 ; EAX = offset	-> AL =	byte. Preserves	EBX, EDX, and EAX bits 8..31.
+    389	    00D7			 ReadByte proc
+    390	    00D7  66| 53		     push ebx
+    391	    00D9  E8 FFE4		     call MapBuffer
+    392	    00DC  64: 8A 07		     mov al,fs:[bx]
+    393	    00DF  66| 5B		     pop ebx
+    394	    00E1  C3			     ret
+    395	    00E2			 ReadByte endp
+    396
+    397					 ; EAX = offset, DL = byte. Preserves all general registers.
+    398	    00E2			 WriteByte proc
+    399	    00E2  66| 53		     push ebx
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 8
+BINED3.ASM
+
+
+
+    400	    00E4  E8 FFD9		     call MapBuffer
+    401	    00E7  64: 88 17		     mov fs:[bx],dl
+    402	    00EA  66| 5B		     pop ebx
+    403	    00EC  C3			     ret
+    404	    00ED			 WriteByte endp
+    405
+    406					 ; ---------------------------------------------------------------------------
+    407					 ; Command tail: one optional filename,	with quotes and	surrounding whitespace.
+    408					 ; CF clear = success; CF set, AX=1 = help, AX=2 = invalid arguments.
+    409					 ; Read	the PSP	through	ES; never assume DS still points at a COM-style	PSP.
+    410					 ; ---------------------------------------------------------------------------
+    411	    00ED			 ParseCommandLine proc
+    412	    00ED  06			     push es
+    413	    00EE  8E 06	0000r		     mov es,pspSegment
+    414	    00F2  BE 0081		     mov si,81h
+    415	    00F5  26: 0F B6 0E 0080	     movzx cx,byte ptr es:[80h]
+    416	    00FB  BF 002Br		     mov di,offset fileName
+    417	    00FE  E8 0085		     call SkipTailSpaces
+    418	    0101  E3 6B			     jcxz parse_success
+    419	    0103  83 F9	02		     cmp cx,2
+    420	    0106  72 18			     jb	parse_name
+    421	    0108  26: 81 3C 3F2F	     cmp word ptr es:[si],3F2Fh	      ;	/?
+    422	    010D  75 11			     jne parse_name
+    423					     ; Recognize help with trailing whitespace,	but not	a filename prefix.
+    424	    010F  56			     push si
+    425	    0110  51			     push cx
+    426	    0111  83 C6	02		     add si,2
+    427	    0114  83 E9	02		     sub cx,2
+    428	    0117  E8 006C		     call SkipTailSpaces
+    429	    011A  0B C9			     or	cx,cx
+    430	    011C  59			     pop cx
+    431	    011D  5E			     pop si
+    432	    011E  74 5A			     jz	parse_help
+    433	    0120			 parse_name:
+    434	    0120  33 DB			     xor bx,bx			    ; BL = quoted, BH =	quote closed
+    435	    0122  26: 80 3C 22		     cmp byte ptr es:[si],'"'
+    436	    0126  75 04			     jne parse_copy
+    437	    0128  B3 01			     mov bl,1
+    438	    012A  46			     inc si
+    439	    012B  49			     dec cx
+    440	    012C			 parse_copy:
+    441	    012C  E3 2D			     jcxz parse_end
+    442	    012E  26: 8A 04		     mov al,es:[si]
+    443	    0131  46			     inc si
+    444	    0132  49			     dec cx
+    445	    0133  3C 22			     cmp al,'"'
+    446	    0135  74 1B			     je	parse_quote
+    447	    0137  0A DB			     or	bl,bl
+    448	    0139  75 08			     jnz parse_character
+    449	    013B  3C 20			     cmp al,' '
+    450	    013D  74 32			     je	parse_trailing
+    451	    013F  3C 09			     cmp al,9
+    452	    0141  74 2E			     je	parse_trailing
+    453	    0143			 parse_character:
+    454	    0143  3C 20			     cmp al,20h
+    455	    0145  72 39			     jb	parse_bad
+    456	    0147  81 FF	00AAr		     cmp di,offset fileName + PATH_BYTES - 1
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 9
+BINED3.ASM
+
+
+
+    457	    014B  73 33			     jae parse_bad
+    458	    014D  88 05			     mov [di],al
+    459	    014F  47			     inc di
+    460	    0150  EB DA			     jmp parse_copy
+    461	    0152			 parse_quote:
+    462	    0152  80 FB	01		     cmp bl,1
+    463	    0155  75 29			     jne parse_bad
+    464	    0157  B7 01			     mov bh,1
+    465	    0159  EB 16			     jmp parse_trailing
+    466	    015B			 parse_end:
+    467	    015B  80 FB	01		     cmp bl,1
+    468	    015E  75 05			     jne parse_finish
+    469	    0160  80 FF	01		     cmp bh,1
+    470	    0163  75 1B			     jne parse_bad
+    471	    0165			 parse_finish:
+    472	    0165  81 FF	002Br		     cmp di,offset fileName
+    473	    0169  74 15			     je	parse_bad
+    474	    016B  C6 05	00		     mov byte ptr [di],0
+    475	    016E			 parse_success:
+    476	    016E  07			     pop es
+    477	    016F  F8			     clc
+    478	    0170  C3			     ret
+    479	    0171			 parse_trailing:
+    480	    0171  E8 0012		     call SkipTailSpaces
+    481	    0174  0B C9			     or	cx,cx
+    482	    0176  75 08			     jnz parse_bad
+    483	    0178  EB E1			     jmp parse_end
+    484	    017A			 parse_help:
+    485	    017A  B8 0001		     mov ax,1
+    486	    017D  07			     pop es
+    487	    017E  F9			     stc
+    488	    017F  C3			     ret
+    489	    0180			 parse_bad:
+    490	    0180  B8 0002		     mov ax,2
+    491	    0183  07			     pop es
+    492	    0184  F9			     stc
+    493	    0185  C3			     ret
+    494	    0186			 ParseCommandLine endp
+    495
+    496					 ; ES:SI/CX command-tail span -> skip spaces and tabs.
+    497	    0186			 SkipTailSpaces	proc
+    498	    0186			 skip_tail_next:
+    499	    0186  E3 10			     jcxz skip_tail_done
+    500	    0188  26: 80 3C 20		     cmp byte ptr es:[si],' '
+    501	    018C  74 06			     je	skip_tail_advance
+    502	    018E  26: 80 3C 09		     cmp byte ptr es:[si],9
+    503	    0192  75 04			     jne skip_tail_done
+    504	    0194			 skip_tail_advance:
+    505	    0194  46			     inc si
+    506	    0195  49			     dec cx
+    507	    0196  EB EE			     jmp skip_tail_next
+    508	    0198			 skip_tail_done:
+    509	    0198  C3			     ret
+    510	    0199			 SkipTailSpaces	endp
+    511
+    512					 ; ---------------------------------------------------------------------------
+    513					 ; File	I/O. Always close handles. Transfer in <=16 KiB	chunks,	normalize the
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 10
+BINED3.ASM
+
+
+
+    514					 ; far pointer on EVERY	chunk, and reject short	transfers instead of displaying
+    515					 ; uninitialized bytes or reporting incomplete saves as	successful.
+    516					 ; ---------------------------------------------------------------------------
+    517	    0199			 LoadFile proc
+    518	    0199  BA 002Br		     mov dx,offset fileName
+    519	    019C  B8 3D00		     mov ax,3D00h
+    520	    019F  CD 21			     int 21h
+    521	    01A1  73 0D			     jnc load_opened
+    522	    01A3  3D 0002		     cmp ax,2			    ; missing filename is a new	document
+    523	    01A6  75 59			     jne load_failed
+    524	    01A8  C7 06	0029r 04CFr	     mov statusText,offset msgNew
+    525	    01AE  F8			     clc
+    526	    01AF  C3			     ret
+    527	    01B0			 load_opened:
+    528	    01B0  A3 024Fr		     mov fileHandle,ax
+    529	    01B3  8B D8			     mov bx,ax
+    530	    01B5  33 C9			     xor cx,cx
+    531	    01B7  33 D2			     xor dx,dx
+    532	    01B9  B8 4202		     mov ax,4202h
+    533	    01BC  CD 21			     int 21h
+    534	    01BE  72 3C			     jc	load_close_failed
+    535	    01C0  66| C1 E2 10		     shl edx,16
+    536	    01C4  8B D0			     mov dx,ax			    ; DX:AX -> EDX
+    537	    01C6  66| 3B 16 0004r	     cmp edx,bufferCapacity
+    538	    01CB  77 2C			     ja	load_too_large
+    539	    01CD  66| 89 16 0008r	     mov fileSize,edx
+    540	    01D2  66| 89 16 0251r	     mov ioRemaining,edx
+    541	    01D7  66| C7 06 0255r     +	     mov ioOffset,0
+    542		  00000000
+    543	    01E0  33 C9			     xor cx,cx
+    544	    01E2  33 D2			     xor dx,dx
+    545	    01E4  B8 4200		     mov ax,4200h
+    546	    01E7  CD 21			     int 21h
+    547	    01E9  72 11			     jc	load_close_failed
+    548	    01EB  C6 06	025Br 3F	     mov ioOperation,3Fh
+    549	    01F0  E8 0010		     call TransferFile
+    550	    01F3  72 07			     jc	load_close_failed
+    551	    01F5  E8 005E		     call CloseFile
+    552	    01F8  C3			     ret
+    553	    01F9			 load_too_large:
+    554	    01F9  B8 0008		     mov ax,8
+    555	    01FC			 load_close_failed:
+    556	    01FC  50			     push ax
+    557	    01FD  E8 0056		     call CloseFile
+    558	    0200  58			     pop ax
+    559	    0201			 load_failed:
+    560	    0201  F9			     stc
+    561	    0202  C3			     ret
+    562	    0203			 LoadFile endp
+    563
+    564					 ; Uses	fileHandle, ioOffset, ioRemaining, ioOperation.	CF reports failure.
+    565	    0203			 TransferFile proc
+    566	    0203			 transfer_next:
+    567	    0203  66| A1 0251r		     mov eax,ioRemaining
+    568	    0207  66| 85 C0		     test eax,eax
+    569	    020A  74 48			     jz	transfer_done
+    570	    020C  66| 3D 00004000	     cmp eax,IO_CHUNK
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 11
+BINED3.ASM
+
+
+
+    571	    0212  76 06			     jbe transfer_count_ready
+    572	    0214  66| B8 00004000	     mov eax,IO_CHUNK
+    573	    021A			 transfer_count_ready:
+    574	    021A  A3 0259r		     mov ioCount,ax
+    575	    021D  8B C8			     mov cx,ax
+    576	    021F  66| A1 0255r		     mov eax,ioOffset
+    577	    0223  E8 FE9A		     call MapBuffer
+    578	    0226  8B D3			     mov dx,bx
+    579	    0228  8B 1E	024Fr		     mov bx,fileHandle
+    580	    022C  8A 26	025Br		     mov ah,ioOperation
+    581	    0230  1E			     push ds
+    582	    0231  0F A0			     push fs
+    583	    0233  1F			     pop ds
+    584	    0234  CD 21			     int 21h
+    585	    0236  1F			     pop ds
+    586	    0237  72 19			     jc	transfer_failed
+    587	    0239  3B 06	0259r		     cmp ax,ioCount
+    588	    023D  75 10			     jne transfer_short
+    589	    023F  66| 0F B7 C0		     movzx eax,ax
+    590	    0243  66| 01 06 0255r	     add ioOffset,eax
+    591	    0248  66| 29 06 0251r	     sub ioRemaining,eax
+    592	    024D  EB B4			     jmp transfer_next
+    593	    024F			 transfer_short:
+    594	    024F  B8 001D		     mov ax,001Dh		    ; generic read/write fault
+    595	    0252			 transfer_failed:
+    596	    0252  F9			     stc
+    597	    0253  C3			     ret
+    598	    0254			 transfer_done:
+    599	    0254  F8			     clc
+    600	    0255  C3			     ret
+    601	    0256			 TransferFile endp
+    602
+    603	    0256			 CloseFile proc
+    604	    0256  8B 1E	024Fr		     mov bx,fileHandle
+    605	    025A  C7 06	024Fr FFFF	     mov fileHandle,0FFFFh
+    606	    0260  B4 3E			     mov ah,3Eh
+    607	    0262  CD 21			     int 21h
+    608	    0264  C3			     ret
+    609	    0265			 CloseFile endp
+    610
+    611					 ; SI =	destination filename, DI = temp-path buffer (PATH_BYTES+16 bytes).
+    612					 ; DOS creates a unique	sibling	temporary file.	Returns	handle AX and CF.
+    613	    0265			 CreateSiblingTemp proc
+    614	    0265  8B DE			     mov bx,si
+    615	    0267  8B D7			     mov dx,di
+    616	    0269			 temp_scan:
+    617	    0269  8A 04			     mov al,[si]
+    618	    026B  0A C0			     or	al,al
+    619	    026D  74 11			     jz	temp_copy
+    620	    026F  46			     inc si
+    621	    0270  3C 5C			     cmp al,'\'
+    622	    0272  74 08			     je	temp_separator
+    623	    0274  3C 2F			     cmp al,'/'
+    624	    0276  74 04			     je	temp_separator
+    625	    0278  3C 3A			     cmp al,':'
+    626	    027A  75 ED			     jne temp_scan
+    627	    027C			 temp_separator:
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 12
+BINED3.ASM
+
+
+
+    628	    027C  8B DE			     mov bx,si
+    629	    027E  EB E9			     jmp temp_scan
+    630	    0280			 temp_copy:
+    631	    0280  8B 36	024Br		     mov si,saveTarget
+    632	    0284			 temp_copy_next:
+    633	    0284  3B F3			     cmp si,bx
+    634	    0286  74 08			     je	temp_prefix_done
+    635	    0288  8A 04			     mov al,[si]
+    636	    028A  88 05			     mov [di],al
+    637	    028C  46			     inc si
+    638	    028D  47			     inc di
+    639	    028E  EB F4			     jmp temp_copy_next
+    640	    0290			 temp_prefix_done:
+    641	    0290  3B FA			     cmp di,dx
+    642	    0292  74 06			     je	temp_relative
+    643	    0294  80 7D	FF 3A		     cmp byte ptr [di-1],':'
+    644	    0298  75 0A			     jne temp_terminate
+    645	    029A			 temp_relative:
+    646	    029A  C6 05	2E		     mov byte ptr [di],'.'
+    647	    029D  C6 45	01 5C		     mov byte ptr [di+1],'\'
+    648	    02A1  83 C7	02		     add di,2
+    649	    02A4			 temp_terminate:
+    650	    02A4  C6 05	00		     mov byte ptr [di],0
+    651	    02A7  33 C9			     xor cx,cx
+    652	    02A9  B4 5A			     mov ah,5Ah
+    653	    02AB  CD 21			     int 21h
+    654	    02AD  C3			     ret
+    655	    02AE			 CreateSiblingTemp endp
+    656
+    657					 ; DS:DX = target path.	A staged save avoids truncating	the original on	errors.
+    658					 ; The old file	is renamed to a	unique sibling until the new rename succeeds.
+    659					 ; On install failure try to restore it; leave recovery	files if that fails.
+    660					 ; CF clear only after the new file has	been fully written, closed and installed.
+    661	    02AE			 SaveDocument proc
+    662	    02AE  89 16	024Br		     mov saveTarget,dx
+    663	    02B2  C6 06	024Er 00	     mov stageExists,0
+    664	    02B7  C6 06	024Dr 00	     mov backupExists,0
+    665	    02BC  B8 4300		     mov ax,4300h
+    666	    02BF  CD 21			     int 21h
+    667	    02C1  72 0A			     jc	save_check_missing
+    668	    02C3  F7 C1	0011		     test cx,11h		    ; read-only	or directory
+    669	    02C7  0F 85	00E3		     jnz save_read_only
+    670	    02CB  EB 07			     jmp save_create_stage
+    671	    02CD			 save_check_missing:
+    672	    02CD  3D 0002		     cmp ax,2
+    673	    02D0  0F 85	00D2		     jne save_error
+    674	    02D4			 save_create_stage:
+    675	    02D4  8B 36	024Br		     mov si,saveTarget
+    676	    02D8  BF 012Br		     mov di,offset stagePath
+    677	    02DB  E8 FF87		     call CreateSiblingTemp
+    678	    02DE  0F 82	00C4		     jc	save_error
+    679	    02E2  C6 06	024Er 01	     mov stageExists,1
+    680	    02E7  A3 024Fr		     mov fileHandle,ax
+    681	    02EA  66| A1 0008r		     mov eax,fileSize
+    682	    02EE  66| A3 0251r		     mov ioRemaining,eax
+    683	    02F2  66| C7 06 0255r     +	     mov ioOffset,0
+    684		  00000000
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 13
+BINED3.ASM
+
+
+
+    685	    02FB  C6 06	025Br 40	     mov ioOperation,40h
+    686	    0300  E8 FF00		     call TransferFile
+    687	    0303  0F 82	0089		     jc	save_transfer_error
+    688	    0307  E8 FF4C		     call CloseFile
+    689	    030A  0F 82	0087		     jc	save_cleanup_error
+    690					     ; Reserve a unique	backup name without overwriting	someone	else's file.
+    691	    030E  8B 36	024Br		     mov si,saveTarget
+    692	    0312  BF 01BBr		     mov di,offset backupPath
+    693	    0315  E8 FF4D		     call CreateSiblingTemp
+    694	    0318  72 7B	90 90		     jc	save_cleanup_error
+    695	    031C  A3 024Fr		     mov fileHandle,ax
+    696	    031F  E8 FF34		     call CloseFile
+    697	    0322  72 71	90 90		     jc	save_cleanup_error
+    698	    0326  BA 01BBr		     mov dx,offset backupPath
+    699	    0329  B4 41			     mov ah,41h
+    700	    032B  CD 21			     int 21h
+    701	    032D  72 66			     jc	save_cleanup_error
+    702	    032F  8B 16	024Br		     mov dx,saveTarget
+    703	    0333  BF 01BBr		     mov di,offset backupPath
+    704	    0336  E8 007D		     call RenameFile
+    705	    0339  73 07			     jnc save_backed_up
+    706	    033B  3D 0002		     cmp ax,2
+    707	    033E  75 55			     jne save_cleanup_error
+    708	    0340  EB 05			     jmp save_install
+    709	    0342			 save_backed_up:
+    710	    0342  C6 06	024Dr 01	     mov backupExists,1
+    711	    0347			 save_install:
+    712	    0347  BA 012Br		     mov dx,offset stagePath
+    713	    034A  8B 3E	024Br		     mov di,saveTarget
+    714	    034E  E8 0065		     call RenameFile
+    715	    0351  72 20			     jc	save_restore
+    716	    0353  C6 06	024Er 00	     mov stageExists,0
+    717	    0358  80 3E	024Dr 00	     cmp backupExists,0
+    718	    035D  74 07			     je	save_success
+    719	    035F  BA 01BBr		     mov dx,offset backupPath
+    720	    0362  B4 41			     mov ah,41h
+    721	    0364  CD 21			     int 21h			    ; deletion failure leaves a	harmless backup
+    722	    0366			 save_success:
+    723	    0366  C6 06	001Fr 00	     mov dirty,0
+    724	    036B  C7 06	0029r 0500r	     mov statusText,offset msgSaved
+    725	    0371  F8			     clc
+    726	    0372  C3			     ret
+    727	    0373			 save_restore:
+    728	    0373  A3 025Cr		     mov lastError,ax
+    729	    0376  80 3E	024Dr 00	     cmp backupExists,0
+    730	    037B  74 18			     je	save_cleanup_error
+    731	    037D  BA 01BBr		     mov dx,offset backupPath
+    732	    0380  8B 3E	024Br		     mov di,saveTarget
+    733	    0384  E8 002F		     call RenameFile
+    734	    0387  72 1D			     jc	save_error		    ; retain both files	for manual recovery
+    735	    0389  C6 06	024Dr 00	     mov backupExists,0
+    736	    038E  EB 05			     jmp save_cleanup_error
+    737	    0390			 save_transfer_error:
+    738	    0390  50			     push ax
+    739	    0391  E8 FEC2		     call CloseFile
+    740	    0394  58			     pop ax
+    741	    0395			 save_cleanup_error:
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 14
+BINED3.ASM
+
+
+
+    742	    0395  A3 025Cr		     mov lastError,ax
+    743	    0398  80 3E	024Er 00	     cmp stageExists,0
+    744	    039D  74 07			     je	save_error
+    745	    039F  BA 012Br		     mov dx,offset stagePath
+    746	    03A2  B4 41			     mov ah,41h
+    747	    03A4  CD 21			     int 21h
+    748	    03A6			 save_error:
+    749	    03A6  C7 06	0029r 0533r	     mov statusText,offset msgSaveError
+    750	    03AC  F9			     stc
+    751	    03AD  C3			     ret
+    752	    03AE			 save_read_only:
+    753	    03AE  C7 06	0029r 0575r	     mov statusText,offset msgReadOnly
+    754	    03B4  F9			     stc
+    755	    03B5  C3			     ret
+    756	    03B6			 SaveDocument endp
+    757
+    758					 ; DS:DX old name, DS:DI new name. Preserve ES across DOS rename.
+    759	    03B6			 RenameFile proc
+    760	    03B6  06			     push es
+    761	    03B7  1E			     push ds
+    762	    03B8  07			     pop es
+    763	    03B9  B4 56			     mov ah,56h
+    764	    03BB  CD 21			     int 21h
+    765	    03BD  07			     pop es
+    766	    03BE  C3			     ret
+    767	    03BF			 RenameFile endp
+    768
+    769					 ; ---------------------------------------------------------------------------
+    770					 ; Editor operations. The byte buffer is the only source of truth. Drawing and
+    771					 ; switching modes never parse characters back out of the display.
+    772					 ; ---------------------------------------------------------------------------
+    773	    03BF			 SetMode proc
+    774					     ; AL = 0 (hex) or 1 (binary).
+    775	    03BF  A2 0014r		     mov editMode,al
+    776	    03C2  C6 06	0015r 00	     mov digitIndex,0
+    777	    03C7  C6 06	0016r 02	     mov digitsPerByte,2
+    778	    03CC  66| C7 06 0017r     +	     mov bytesPerRow,16
+    779		  00000010
+    780	    03D5  66| C7 06 001Br     +	     mov pageBytes,DATA_ROWS * 16
+    781		  00000140
+    782	    03DE  0A C0			     or	al,al
+    783	    03E0  74 17			     jz	set_mode_done
+    784	    03E2  C6 06	0016r 08	     mov digitsPerByte,8
+    785	    03E7  66| C7 06 0017r     +	     mov bytesPerRow,6
+    786		  00000006
+    787	    03F0  66| C7 06 001Br     +	     mov pageBytes,DATA_ROWS * 6
+    788		  00000078
+    789	    03F9			 set_mode_done:
+    790	    03F9  66| C7 06 0010r     +	     mov viewOffset,0
+    791		  00000000
+    792	    0402  C3			     ret
+    793	    0403			 SetMode endp
+    794
+    795					 ; AL =	typed ASCII character. Ignore invalid characters; modify a single
+    796					 ; nibble/bit, preserving the rest. A new EOF byte starts as zero.
+    797	    0403			 EditDigit proc
+    798	    0403  E8 0088		     call AsciiToHex
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 15
+BINED3.ASM
+
+
+
+    799	    0406  72 7E	90 90		     jc	edit_done
+    800	    040A  80 3E	0014r 00	     cmp editMode,0
+    801	    040F  74 04			     je	edit_valid
+    802	    0411  3C 01			     cmp al,1
+    803	    0413  77 71			     ja	edit_done
+    804	    0415			 edit_valid:
+    805	    0415  8A F0			     mov dh,al
+    806	    0417  66| 8B 36 000Cr	     mov esi,cursorOffset
+    807	    041C  66| 3B 36 0008r	     cmp esi,fileSize
+    808	    0421  72 19			     jb	edit_existing
+    809	    0423  66| 3B 36 0004r	     cmp esi,bufferCapacity
+    810	    0428  73 5D			     jae edit_full
+    811	    042A  66| 8B C6		     mov eax,esi
+    812	    042D  32 D2			     xor dl,dl
+    813	    042F  E8 FCB0		     call WriteByte
+    814	    0432  66| FF 06 0008r	     inc fileSize
+    815	    0437  C6 06	001Fr 01	     mov dirty,1
+    816	    043C			 edit_existing:
+    817	    043C  66| 8B C6		     mov eax,esi
+    818	    043F  E8 FC95		     call ReadByte
+    819	    0442  8A D0			     mov dl,al
+    820	    0444  80 3E	0014r 00	     cmp editMode,0
+    821	    0449  75 0F			     jne edit_binary
+    822	    044B  B1 04			     mov cl,4
+    823	    044D  80 3E	0015r 00	     cmp digitIndex,0
+    824	    0452  74 02			     je	edit_hex_shift
+    825	    0454  32 C9			     xor cl,cl
+    826	    0456			 edit_hex_shift:
+    827	    0456  B0 0F			     mov al,0Fh
+    828	    0458  EB 08			     jmp edit_apply
+    829	    045A			 edit_binary:
+    830	    045A  B1 07			     mov cl,7
+    831	    045C  2A 0E	0015r		     sub cl,digitIndex
+    832	    0460  B0 01			     mov al,1
+    833	    0462			 edit_apply:
+    834	    0462  D2 E0			     shl al,cl
+    835	    0464  F6 D0			     not al
+    836	    0466  22 D0			     and dl,al
+    837	    0468  8A C6			     mov al,dh
+    838	    046A  D2 E0			     shl al,cl
+    839	    046C  0A D0			     or	dl,al
+    840	    046E  66| 8B C6		     mov eax,esi
+    841	    0471  E8 FC63		     call ReadByte
+    842	    0474  3A C2			     cmp al,dl
+    843	    0476  74 0B			     je	edit_advance
+    844	    0478  66| 8B C6		     mov eax,esi
+    845	    047B  E8 FC64		     call WriteByte
+    846	    047E  C6 06	001Fr 01	     mov dirty,1
+    847	    0483			 edit_advance:
+    848	    0483  E8 00A2		     call MoveRight
+    849	    0486			 edit_done:
+    850	    0486  C3			     ret
+    851	    0487			 edit_full:
+    852	    0487  C7 06	0029r 0507r	     mov statusText,offset msgFull
+    853	    048D  C3			     ret
+    854	    048E			 EditDigit endp
+    855
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 16
+BINED3.ASM
+
+
+
+    856					 ; AL ASCII -> AL 0..15, CF on invalid input. Accept lowercase too.
+    857	    048E			 AsciiToHex proc
+    858	    048E  3C 30			     cmp al,'0'
+    859	    0490  72 16			     jb	ascii_invalid
+    860	    0492  3C 39			     cmp al,'9'
+    861	    0494  76 0E			     jbe ascii_number
+    862	    0496  24 DF			     and al,0DFh
+    863	    0498  3C 41			     cmp al,'A'
+    864	    049A  72 0C			     jb	ascii_invalid
+    865	    049C  3C 46			     cmp al,'F'
+    866	    049E  77 08			     ja	ascii_invalid
+    867	    04A0  2C 37			     sub al,'A'-10
+    868	    04A2  F8			     clc
+    869	    04A3  C3			     ret
+    870	    04A4			 ascii_number:
+    871	    04A4  2C 30			     sub al,'0'
+    872	    04A6  F8			     clc
+    873	    04A7  C3			     ret
+    874	    04A8			 ascii_invalid:
+    875	    04A8  F9			     stc
+    876	    04A9  C3			     ret
+    877	    04AA			 AsciiToHex endp
+    878
+    879	    04AA			 InsertByte proc
+    880	    04AA  66| 8B 36 0008r	     mov esi,fileSize
+    881	    04AF  66| 3B 36 0004r	     cmp esi,bufferCapacity
+    882	    04B4  73 34			     jae insert_full
+    883	    04B6			 insert_shift:
+    884	    04B6  66| 3B 36 000Cr	     cmp esi,cursorOffset
+    885	    04BB  76 14			     jbe insert_zero
+    886	    04BD  66| 67| 8D 46	FF	     lea eax,[esi-1]
+    887	    04C2  E8 FC12		     call ReadByte
+    888	    04C5  8A D0			     mov dl,al
+    889	    04C7  66| 8B C6		     mov eax,esi
+    890	    04CA  E8 FC15		     call WriteByte
+    891	    04CD  66| 4E		     dec esi
+    892	    04CF  EB E5			     jmp insert_shift
+    893	    04D1			 insert_zero:
+    894	    04D1  66| A1 000Cr		     mov eax,cursorOffset
+    895	    04D5  32 D2			     xor dl,dl
+    896	    04D7  E8 FC08		     call WriteByte
+    897	    04DA  66| FF 06 0008r	     inc fileSize
+    898	    04DF  C6 06	0015r 00	     mov digitIndex,0
+    899	    04E4  C6 06	001Fr 01	     mov dirty,1
+    900	    04E9  C3			     ret
+    901	    04EA			 insert_full:
+    902	    04EA  C7 06	0029r 0507r	     mov statusText,offset msgFull
+    903	    04F0  C3			     ret
+    904	    04F1			 InsertByte endp
+    905
+    906	    04F1			 DeleteByte proc
+    907	    04F1  66| 8B 36 000Cr	     mov esi,cursorOffset
+    908	    04F6  66| 3B 36 0008r	     cmp esi,fileSize
+    909	    04FB  73 2A			     jae delete_done
+    910	    04FD  66| FF 0E 0008r	     dec fileSize
+    911	    0502			 delete_shift:
+    912	    0502  66| 3B 36 0008r	     cmp esi,fileSize
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 17
+BINED3.ASM
+
+
+
+    913	    0507  73 14			     jae delete_changed
+    914	    0509  66| 67| 8D 46	01	     lea eax,[esi+1]
+    915	    050E  E8 FBC6		     call ReadByte
+    916	    0511  8A D0			     mov dl,al
+    917	    0513  66| 8B C6		     mov eax,esi
+    918	    0516  E8 FBC9		     call WriteByte
+    919	    0519  66| 46		     inc esi
+    920	    051B  EB E5			     jmp delete_shift
+    921	    051D			 delete_changed:
+    922	    051D  C6 06	0015r 00	     mov digitIndex,0
+    923	    0522  C6 06	001Fr 01	     mov dirty,1
+    924	    0527			 delete_done:
+    925	    0527  C3			     ret
+    926	    0528			 DeleteByte endp
+    927
+    928	    0528			 MoveRight proc
+    929	    0528  66| A1 000Cr		     mov eax,cursorOffset
+    930	    052C  66| 3B 06 0008r	     cmp eax,fileSize
+    931	    0531  73 17			     jae right_done
+    932	    0533  FE 06	0015r		     inc digitIndex
+    933	    0537  A0 0015r		     mov al,digitIndex
+    934	    053A  3A 06	0016r		     cmp al,digitsPerByte
+    935	    053E  72 0A			     jb	right_done
+    936	    0540  C6 06	0015r 00	     mov digitIndex,0
+    937	    0545  66| FF 06 000Cr	     inc cursorOffset
+    938	    054A			 right_done:
+    939	    054A  C3			     ret
+    940	    054B			 MoveRight endp
+    941
+    942	    054B			 MoveLeft proc
+    943	    054B  80 3E	0015r 00	     cmp digitIndex,0
+    944	    0550  75 13			     jne left_digit
+    945	    0552  66| 83 3E 000Cr 00	     cmp cursorOffset,0
+    946	    0558  74 0F			     je	left_done
+    947	    055A  66| FF 0E 000Cr	     dec cursorOffset
+    948	    055F  A0 0016r		     mov al,digitsPerByte
+    949	    0562  A2 0015r		     mov digitIndex,al
+    950	    0565			 left_digit:
+    951	    0565  FE 0E	0015r		     dec digitIndex
+    952	    0569			 left_done:
+    953	    0569  C3			     ret
+    954	    056A			 MoveLeft endp
+    955
+    956					 ; EAX = proposed cursor offset	(nonnegative). Clamp to	EOF.
+    957	    056A			 SetCursor proc
+    958	    056A  66| 3B 06 0008r	     cmp eax,fileSize
+    959	    056F  76 04			     jbe cursor_in_range
+    960	    0571  66| A1 0008r		     mov eax,fileSize
+    961	    0575			 cursor_in_range:
+    962	    0575  66| A3 000Cr		     mov cursorOffset,eax
+    963	    0579  66| 3B 06 0008r	     cmp eax,fileSize
+    964	    057E  75 05			     jne cursor_done
+    965	    0580  C6 06	0015r 00	     mov digitIndex,0
+    966	    0585			 cursor_done:
+    967	    0585  C3			     ret
+    968	    0586			 SetCursor endp
+    969
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 18
+BINED3.ASM
+
+
+
+    970					 ; EAX = amount	to subtract, with saturation at	zero.
+    971	    0586			 MoveBackward proc
+    972	    0586  66| 8B 16 000Cr	     mov edx,cursorOffset
+    973	    058B  66| 2B D0		     sub edx,eax
+    974	    058E  73 03			     jnc backward_in_range
+    975	    0590  66| 33 D2		     xor edx,edx
+    976	    0593			 backward_in_range:
+    977	    0593  66| 8B C2		     mov eax,edx
+    978	    0596  E8 FFD1		     call SetCursor
+    979	    0599  C3			     ret
+    980	    059A			 MoveBackward endp
+    981
+    982	    059A			 EnsureVisible proc
+    983	    059A  66| A1 0010r		     mov eax,viewOffset
+    984	    059E  66| 33 D2		     xor edx,edx
+    985	    05A1  66| F7 36 0017r	     div bytesPerRow
+    986	    05A6  66| 29 16 0010r	     sub viewOffset,edx
+    987	    05AB  66| A1 000Cr		     mov eax,cursorOffset
+    988	    05AF  66| 3B 06 0010r	     cmp eax,viewOffset
+    989	    05B4  72 2C			     jb	visible_align_cursor
+    990	    05B6  66| 8B 16 0010r	     mov edx,viewOffset
+    991	    05BB  66| 03 16 001Br	     add edx,pageBytes
+    992	    05C0  66| 3B C2		     cmp eax,edx
+    993	    05C3  72 2F			     jb	visible_done
+    994	    05C5  66| 33 D2		     xor edx,edx
+    995	    05C8  66| F7 36 0017r	     div bytesPerRow
+    996	    05CD  66| 0F AF 06 0017r	     imul eax,bytesPerRow
+    997	    05D3  66| 2B 06 001Br	     sub eax,pageBytes
+    998	    05D8  66| 03 06 0017r	     add eax,bytesPerRow
+    999	    05DD  66| A3 0010r		     mov viewOffset,eax
+   1000	    05E1  C3			     ret
+   1001	    05E2			 visible_align_cursor:
+   1002	    05E2  66| 33 D2		     xor edx,edx
+   1003	    05E5  66| F7 36 0017r	     div bytesPerRow
+   1004	    05EA  66| 0F AF 06 0017r	     imul eax,bytesPerRow
+   1005	    05F0  66| A3 0010r		     mov viewOffset,eax
+   1006	    05F4			 visible_done:
+   1007	    05F4  C3			     ret
+   1008	    05F5			 EnsureVisible endp
+   1009
+   1010					 ; AX =	BIOS key word. Each dispatch returns to	its caller; no nested event
+   1011					 ; loops, cross-procedure jumps	into epilogues,	recursion, or SP resets.
+   1012	    05F5			 HandleKey proc
+   1013	    05F5  3C 1B			     cmp al,27
+   1014	    05F7  0F 84	0168		     je	key_quit
+   1015	    05FB  3C 09			     cmp al,9
+   1016	    05FD  0F 84	0136		     je	key_toggle
+   1017	    0601  3C 20			     cmp al,' '
+   1018	    0603  0F 84	0112		     je	key_next_byte
+   1019	    0607  3C 08			     cmp al,8
+   1020	    0609  0F 84	011B		     je	key_previous_byte
+   1021	    060D  3C 00			     cmp al,0
+   1022	    060F  74 08			     je	key_extended
+   1023	    0611  3C E0			     cmp al,0E0h
+   1024	    0613  74 04			     je	key_extended
+   1025	    0615  E8 FDEB		     call EditDigit
+   1026	    0618  C3			     ret
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 19
+BINED3.ASM
+
+
+
+   1027	    0619			 key_extended:
+   1028	    0619  80 FC	3B		     cmp ah,3Bh
+   1029	    061C  0F 84	013F		     je	key_help
+   1030	    0620  80 FC	3C		     cmp ah,3Ch
+   1031	    0623  0F 84	012D		     je	key_save
+   1032	    0627  80 FC	3E		     cmp ah,3Eh
+   1033	    062A  0F 84	012D		     je	key_save_as
+   1034	    062E  80 FC	3F		     cmp ah,3Fh
+   1035	    0631  0F 84	010B		     je	key_binary
+   1036	    0635  80 FC	40		     cmp ah,40h
+   1037	    0638  0F 84	010A		     je	key_hex
+   1038	    063C  80 FC	4B		     cmp ah,4Bh
+   1039	    063F  74 40			     je	key_left
+   1040	    0641  80 FC	4D		     cmp ah,4Dh
+   1041	    0644  74 3F			     je	key_right
+   1042	    0646  80 FC	48		     cmp ah,48h
+   1043	    0649  74 3E			     je	key_up
+   1044	    064B  80 FC	50		     cmp ah,50h
+   1045	    064E  74 41			     je	key_down
+   1046	    0650  80 FC	49		     cmp ah,49h
+   1047	    0653  74 49			     je	key_page_up
+   1048	    0655  80 FC	51		     cmp ah,51h
+   1049	    0658  74 4C			     je	key_page_down
+   1050	    065A  80 FC	47		     cmp ah,47h
+   1051	    065D  74 54			     je	key_home
+   1052	    065F  80 FC	4F		     cmp ah,4Fh
+   1053	    0662  74 6B			     je	key_end
+   1054	    0664  80 FC	77		     cmp ah,77h
+   1055	    0667  0F 84	009A		     je	key_file_home
+   1056	    066B  80 FC	75		     cmp ah,75h
+   1057	    066E  0F 84	009F		     je	key_file_end
+   1058	    0672  80 FC	52		     cmp ah,52h
+   1059	    0675  0F 84	00D3		     je	key_insert
+   1060	    0679  80 FC	53		     cmp ah,53h
+   1061	    067C  0F 84	00D0		     je	key_delete
+   1062	    0680  C3			     ret
+   1063	    0681			 key_left:
+   1064	    0681  E8 FEC7		     call MoveLeft
+   1065	    0684  C3			     ret
+   1066	    0685			 key_right:
+   1067	    0685  E8 FEA0		     call MoveRight
+   1068	    0688  C3			     ret
+   1069	    0689			 key_up:
+   1070	    0689  66| A1 0017r		     mov eax,bytesPerRow
+   1071	    068D  E8 FEF6		     call MoveBackward
+   1072	    0690  C3			     ret
+   1073	    0691			 key_down:
+   1074	    0691  66| A1 000Cr		     mov eax,cursorOffset
+   1075	    0695  66| 03 06 0017r	     add eax,bytesPerRow
+   1076	    069A  E8 FECD		     call SetCursor
+   1077	    069D  C3			     ret
+   1078	    069E			 key_page_up:
+   1079	    069E  66| A1 001Br		     mov eax,pageBytes
+   1080	    06A2  E8 FEE1		     call MoveBackward
+   1081	    06A5  C3			     ret
+   1082	    06A6			 key_page_down:
+   1083	    06A6  66| A1 000Cr		     mov eax,cursorOffset
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 20
+BINED3.ASM
+
+
+
+   1084	    06AA  66| 03 06 001Br	     add eax,pageBytes
+   1085	    06AF  E8 FEB8		     call SetCursor
+   1086	    06B2  C3			     ret
+   1087	    06B3			 key_home:
+   1088	    06B3  66| A1 000Cr		     mov eax,cursorOffset
+   1089	    06B7  66| 33 D2		     xor edx,edx
+   1090	    06BA  66| F7 36 0017r	     div bytesPerRow
+   1091	    06BF  66| A1 000Cr		     mov eax,cursorOffset
+   1092	    06C3  66| 2B C2		     sub eax,edx
+   1093	    06C6  C6 06	0015r 00	     mov digitIndex,0
+   1094	    06CB  E8 FE9C		     call SetCursor
+   1095	    06CE  C3			     ret
+   1096	    06CF			 key_end:
+   1097	    06CF  66| A1 000Cr		     mov eax,cursorOffset
+   1098	    06D3  66| 33 D2		     xor edx,edx
+   1099	    06D6  66| F7 36 0017r	     div bytesPerRow
+   1100	    06DB  66| A1 000Cr		     mov eax,cursorOffset
+   1101	    06DF  66| 2B C2		     sub eax,edx
+   1102	    06E2  66| 03 06 0017r	     add eax,bytesPerRow
+   1103	    06E7  66| 48		     dec eax
+   1104	    06E9  E8 FE7E		     call SetCursor
+   1105	    06EC  A0 0016r		     mov al,digitsPerByte
+   1106	    06EF  FE C8			     dec al
+   1107	    06F1  A2 0015r		     mov digitIndex,al
+   1108	    06F4  66| A1 000Cr		     mov eax,cursorOffset
+   1109	    06F8  66| 3B 06 0008r	     cmp eax,fileSize
+   1110	    06FD  75 05			     jne key_end_done
+   1111	    06FF  C6 06	0015r 00	     mov digitIndex,0
+   1112	    0704			 key_end_done:
+   1113	    0704  C3			     ret
+   1114	    0705			 key_file_home:
+   1115	    0705  66| 33 C0		     xor eax,eax
+   1116	    0708  C6 06	0015r 00	     mov digitIndex,0
+   1117	    070D  E8 FE5A		     call SetCursor
+   1118	    0710  C3			     ret
+   1119	    0711			 key_file_end:
+   1120	    0711  66| A1 0008r		     mov eax,fileSize
+   1121	    0715  E8 FE52		     call SetCursor
+   1122	    0718  C3			     ret
+   1123	    0719			 key_next_byte:
+   1124	    0719  66| A1 000Cr		     mov eax,cursorOffset
+   1125	    071D  66| 40		     inc eax
+   1126	    071F  C6 06	0015r 00	     mov digitIndex,0
+   1127	    0724  E8 FE43		     call SetCursor
+   1128	    0727  C3			     ret
+   1129	    0728			 key_previous_byte:
+   1130	    0728  66| B8 00000001	     mov eax,1
+   1131	    072E  C6 06	0015r 00	     mov digitIndex,0
+   1132	    0733  E8 FE50		     call MoveBackward
+   1133	    0736  C3			     ret
+   1134	    0737			 key_toggle:
+   1135	    0737  A0 0014r		     mov al,editMode
+   1136	    073A  34 01			     xor al,1
+   1137	    073C  E8 FC80		     call SetMode
+   1138	    073F  C3			     ret
+   1139	    0740			 key_binary:
+   1140	    0740  B0 01			     mov al,1
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 21
+BINED3.ASM
+
+
+
+   1141	    0742  E8 FC7A		     call SetMode
+   1142	    0745  C3			     ret
+   1143	    0746			 key_hex:
+   1144	    0746  32 C0			     xor al,al
+   1145	    0748  E8 FC74		     call SetMode
+   1146	    074B  C3			     ret
+   1147	    074C			 key_insert:
+   1148	    074C  E8 FD5B		     call InsertByte
+   1149	    074F  C3			     ret
+   1150	    0750			 key_delete:
+   1151	    0750  E8 FD9E		     call DeleteByte
+   1152	    0753  C3			     ret
+   1153	    0754			 key_save:
+   1154	    0754  BA 002Br		     mov dx,offset fileName
+   1155	    0757  E8 FB54		     call SaveDocument
+   1156	    075A  C3			     ret
+   1157	    075B			 key_save_as:
+   1158	    075B  E8 02F5		     call SaveAsDialog
+   1159	    075E  C3			     ret
+   1160	    075F			 key_help:
+   1161	    075F  E8 029D		     call HelpDialog
+   1162	    0762  C3			     ret
+   1163	    0763			 key_quit:
+   1164	    0763  E8 03A7		     call QuitDialog
+   1165	    0766  C3			     ret
+   1166	    0767			 HandleKey endp
+   1167
+   1168					 ; ---------------------------------------------------------------------------
+   1169					 ; Screen output: 80x25, page zero, direct B800	writes.	No display reads are
+   1170					 ; used	for editing. DI	is a video BYTE	offset,	AH an attribute, SI a string.
+   1171					 ; ---------------------------------------------------------------------------
+   1172	    0767			 BeginVideo proc
+   1173	    0767  B4 0F			     mov ah,0Fh
+   1174	    0769  CD 10			     int 10h
+   1175	    076B  A2 0023r		     mov oldVideoMode,al
+   1176	    076E  88 3E	0024r		     mov oldVideoPage,bh
+   1177	    0772  B4 03			     mov ah,03h
+   1178	    0774  CD 10			     int 10h
+   1179	    0776  89 0E	0025r		     mov oldCursorShape,cx
+   1180	    077A  89 16	0027r		     mov oldCursorPos,dx
+   1181	    077E  B8 0003		     mov ax,0003h
+   1182	    0781  CD 10			     int 10h
+   1183	    0783  B9 0607		     mov cx,0607h
+   1184	    0786  B4 01			     mov ah,01h
+   1185	    0788  CD 10			     int 10h
+   1186	    078A  C6 06	0022r 01	     mov videoActive,1
+   1187	    078F  C3			     ret
+   1188	    0790			 BeginVideo endp
+   1189
+   1190	    0790			 EndVideo proc
+   1191	    0790  32 E4			     xor ah,ah
+   1192	    0792  A0 0023r		     mov al,oldVideoMode
+   1193	    0795  CD 10			     int 10h
+   1194	    0797  B4 05			     mov ah,05h
+   1195	    0799  A0 0024r		     mov al,oldVideoPage
+   1196	    079C  CD 10			     int 10h
+   1197	    079E  8B 0E	0025r		     mov cx,oldCursorShape
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 22
+BINED3.ASM
+
+
+
+   1198	    07A2  B4 01			     mov ah,01h
+   1199	    07A4  CD 10			     int 10h
+   1200	    07A6  8B 16	0027r		     mov dx,oldCursorPos
+   1201	    07AA  8A 3E	0024r		     mov bh,oldVideoPage
+   1202	    07AE  B4 02			     mov ah,02h
+   1203	    07B0  CD 10			     int 10h
+   1204	    07B2  C3			     ret
+   1205	    07B3			 EndVideo endp
+   1206
+   1207					 ; ES=B800, AH attribute, DI video offset. Bounded to the current 80-column
+   1208					 ; row,	including user-controlled filenames. Preserves AH; advances SI/DI.
+   1209	    07B3			 PutString proc
+   1210	    07B3  53			     push bx
+   1211	    07B4  51			     push cx
+   1212	    07B5  52			     push dx
+   1213	    07B6  50			     push ax
+   1214	    07B7  8B C7			     mov ax,di
+   1215	    07B9  33 D2			     xor dx,dx
+   1216	    07BB  BB 00A0		     mov bx,160
+   1217	    07BE  F7 F3			     div bx
+   1218	    07C0  B9 00A0		     mov cx,160
+   1219	    07C3  2B CA			     sub cx,dx
+   1220	    07C5  D1 E9			     shr cx,1
+   1221	    07C7  58			     pop ax
+   1222	    07C8			 put_string_next:
+   1223	    07C8  8A 04			     mov al,[si]
+   1224	    07CA  0A C0			     or	al,al
+   1225	    07CC  74 0F			     jz	put_string_done
+   1226	    07CE  81 FF	0FA0		     cmp di,4000
+   1227	    07D2  73 09			     jae put_string_done
+   1228	    07D4  26: 89 05		     mov es:[di],ax
+   1229	    07D7  83 C7	02		     add di,2
+   1230	    07DA  46			     inc si
+   1231	    07DB  E2 EB			     loop put_string_next
+   1232	    07DD			 put_string_done:
+   1233	    07DD  5A			     pop dx
+   1234	    07DE  59			     pop cx
+   1235	    07DF  5B			     pop bx
+   1236	    07E0  C3			     ret
+   1237	    07E1			 PutString endp
+   1238
+   1239					 ; EAX value ->	8 hex digits at	ES:DI, AH attribute passed in BL.
+   1240	    07E1			 PutHex32 proc
+   1241	    07E1  66| 50		     push eax
+   1242	    07E3  51			     push cx
+   1243	    07E4  66| 52		     push edx
+   1244	    07E6  66| 8B D0		     mov edx,eax
+   1245	    07E9  B9 0008		     mov cx,8
+   1246	    07EC			 put_hex32_next:
+   1247	    07EC  66| C1 C2 04		     rol edx,4
+   1248	    07F0  8A C2			     mov al,dl
+   1249	    07F2  24 0F			     and al,0Fh
+   1250	    07F4  E8 000B		     call HexCharacter
+   1251	    07F7  8A E3			     mov ah,bl
+   1252	    07F9  AB			     stosw
+   1253	    07FA  E2 F0			     loop put_hex32_next
+   1254	    07FC  66| 5A		     pop edx
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 23
+BINED3.ASM
+
+
+
+   1255	    07FE  59			     pop cx
+   1256	    07FF  66| 58		     pop eax
+   1257	    0801  C3			     ret
+   1258	    0802			 PutHex32 endp
+   1259
+   1260					 ; AL nibble ->	ASCII, preserves all other registers.
+   1261	    0802			 HexCharacter proc
+   1262	    0802  53			     push bx
+   1263	    0803  33 DB			     xor bx,bx
+   1264	    0805  8A D8			     mov bl,al
+   1265	    0807  8A 87	026Ar		     mov al,hexDigits[bx]
+   1266	    080B  5B			     pop bx
+   1267	    080C  C3			     ret
+   1268	    080D			 HexCharacter endp
+   1269
+   1270					 ; AX =	row -> DI = row*160.
+   1271	    080D			 RowAddress proc
+   1272	    080D  69 F8	00A0		     imul di,ax,160
+   1273	    0811  C3			     ret
+   1274	    0812			 RowAddress endp
+   1275
+   1276	    0812			 RenderScreen proc
+   1277	    0812  06			     push es
+   1278	    0813  B8 B800		     mov ax,0B800h
+   1279	    0816  8E C0			     mov es,ax
+   1280	    0818  33 FF			     xor di,di
+   1281	    081A  B8 0A20		     mov ax,ATTR_NORMAL	* 256 +	' '
+   1282	    081D  B9 07D0		     mov cx,2000
+   1283	    0820  F3> AB		     rep stosw
+   1284	    0822  33 FF			     xor di,di
+   1285	    0824  B8 0220		     mov ax,ATTR_TITLE * 256 + ' '
+   1286	    0827  B9 0050		     mov cx,80
+   1287	    082A  F3> AB		     rep stosw
+   1288	    082C  33 FF			     xor di,di
+   1289	    082E  B4 02			     mov ah,ATTR_TITLE
+   1290	    0830  BE 027Ar		     mov si,offset titleText
+   1291	    0833  E8 FF7D		     call PutString
+   1292	    0836  BE 02A1r		     mov si,offset hexText
+   1293	    0839  80 3E	0014r 00	     cmp editMode,0
+   1294	    083E  74 03			     je	render_mode
+   1295	    0840  BE 02A5r		     mov si,offset binText
+   1296	    0843			 render_mode:
+   1297	    0843  E8 FF6D		     call PutString
+   1298	    0846  80 3E	001Fr 00	     cmp dirty,0
+   1299	    084B  74 06			     je	render_columns
+   1300	    084D  BE 02A9r		     mov si,offset changedText
+   1301	    0850  E8 FF60		     call PutString
+   1302	    0853			 render_columns:
+   1303	    0853  BF 00A0		     mov di,160
+   1304	    0856  B4 02			     mov ah,ATTR_OFFSET
+   1305	    0858  BE 02B5r		     mov si,offset columnText
+   1306	    085B  E8 FF55		     call PutString
+   1307	    085E  BF 011A		     mov di,160	+ 61 * 2
+   1308	    0861  80 3E	0014r 00	     cmp editMode,0
+   1309	    0866  74 03			     je	render_ascii_header
+   1310	    0868  BF 0124		     mov di,160	+ 66 * 2
+   1311	    086B			 render_ascii_header:
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 24
+BINED3.ASM
+
+
+
+   1312	    086B  BE 02C4r		     mov si,offset asciiText
+   1313	    086E  E8 FF42		     call PutString
+   1314	    0871  66| A1 0010r		     mov eax,viewOffset
+   1315	    0875  66| A3 025Er		     mov renderOffset,eax
+   1316	    0879  C7 06	0262r 0000	     mov renderRow,0
+   1317	    087F			 render_next_row:
+   1318	    087F  A1 0262r		     mov ax,renderRow
+   1319	    0882  05 0002		     add ax,DATA_TOP
+   1320	    0885  E8 FF85		     call RowAddress
+   1321	    0888  66| A1 025Er		     mov eax,renderOffset
+   1322	    088C  B3 02			     mov bl,ATTR_OFFSET
+   1323	    088E  E8 FF50		     call PutHex32
+   1324	    0891  C7 06	0264r 0000	     mov renderColumn,0
+   1325	    0897			 render_next_byte:
+   1326	    0897  E8 006F		     call RenderByte
+   1327	    089A  66| FF 06 025Er	     inc renderOffset
+   1328	    089F  FF 06	0264r		     inc renderColumn
+   1329	    08A3  66| 0F B7 06 0264r	     movzx eax,renderColumn
+   1330	    08A9  66| 3B 06 0017r	     cmp eax,bytesPerRow
+   1331	    08AE  72 E7			     jb	render_next_byte
+   1332	    08B0  FF 06	0262r		     inc renderRow
+   1333	    08B4  83 3E	0262r 14	     cmp renderRow,DATA_ROWS
+   1334	    08B9  72 C4			     jb	render_next_row
+   1335	    08BB  BF 0DC0		     mov di,22 * 160
+   1336	    08BE  B4 0A			     mov ah,ATTR_STATUS
+   1337	    08C0  BE 02CAr		     mov si,offset offsetText
+   1338	    08C3  E8 FEED		     call PutString
+   1339	    08C6  66| A1 000Cr		     mov eax,cursorOffset
+   1340	    08CA  B3 0A			     mov bl,ATTR_STATUS
+   1341	    08CC  E8 FF12		     call PutHex32
+   1342	    08CF  B4 0A			     mov ah,ATTR_STATUS
+   1343	    08D1  BE 02D3r		     mov si,offset sizeText
+   1344	    08D4  E8 FEDC		     call PutString
+   1345	    08D7  66| A1 0008r		     mov eax,fileSize
+   1346	    08DB  E8 FF03		     call PutHex32
+   1347	    08DE  B4 0A			     mov ah,ATTR_STATUS
+   1348	    08E0  BE 02DCr		     mov si,offset capacityText
+   1349	    08E3  E8 FECD		     call PutString
+   1350	    08E6  66| A1 0004r		     mov eax,bufferCapacity
+   1351	    08EA  E8 FEF4		     call PutHex32
+   1352	    08ED  BF 0E60		     mov di,23 * 160
+   1353	    08F0  B4 0A			     mov ah,ATTR_NORMAL
+   1354	    08F2  BE 002Br		     mov si,offset fileName
+   1355	    08F5  E8 FEBB		     call PutString
+   1356	    08F8  BF 0F00		     mov di,24 * 160
+   1357	    08FB  B4 0A			     mov ah,ATTR_STATUS
+   1358	    08FD  8B 36	0029r		     mov si,statusText
+   1359	    0901  E8 FEAF		     call PutString
+   1360	    0904  07			     pop es
+   1361	    0905  E8 00C4		     call PlaceCursor
+   1362	    0908  C3			     ret
+   1363	    0909			 RenderScreen endp
+   1364
+   1365	    0909			 RenderByte proc
+   1366	    0909  66| A1 025Er		     mov eax,renderOffset
+   1367	    090D  66| 3B 06 0008r	     cmp eax,fileSize
+   1368	    0912  0F 87	00B5		     ja	render_byte_done
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 25
+BINED3.ASM
+
+
+
+   1369	    0916  C6 06	0266r 00	     mov renderValue,0
+   1370	    091B  74 06			     je	render_byte_position
+   1371	    091D  E8 F7B7		     call ReadByte
+   1372	    0920  A2 0266r		     mov renderValue,al
+   1373	    0923			 render_byte_position:
+   1374	    0923  A1 0262r		     mov ax,renderRow
+   1375	    0926  05 0002		     add ax,DATA_TOP
+   1376	    0929  E8 FEE1		     call RowAddress
+   1377	    092C  A1 0264r		     mov ax,renderColumn
+   1378	    092F  BB 0003		     mov bx,3
+   1379	    0932  80 3E	0014r 00	     cmp editMode,0
+   1380	    0937  74 03			     je	render_byte_stride
+   1381	    0939  BB 0009		     mov bx,9
+   1382	    093C			 render_byte_stride:
+   1383	    093C  F7 E3			     mul bx
+   1384	    093E  05 000A		     add ax,DATA_COLUMN
+   1385	    0941  D1 E0			     shl ax,1
+   1386	    0943  03 F8			     add di,ax
+   1387	    0945  C6 06	0267r 0A	     mov renderAttr,ATTR_NORMAL
+   1388	    094A  66| A1 025Er		     mov eax,renderOffset
+   1389	    094E  66| 3B 06 000Cr	     cmp eax,cursorOffset
+   1390	    0953  75 05			     jne render_byte_digits
+   1391	    0955  C6 06	0267r 0D	     mov renderAttr,ATTR_SELECTED
+   1392	    095A			 render_byte_digits:
+   1393	    095A  32 ED			     xor ch,ch
+   1394	    095C  8A 0E	0016r		     mov cl,digitsPerByte
+   1395	    0960  8A 36	0266r		     mov dh,renderValue
+   1396	    0964			 render_digit:
+   1397	    0964  66| A1 025Er		     mov eax,renderOffset
+   1398	    0968  66| 3B 06 0008r	     cmp eax,fileSize
+   1399	    096D  B0 2D			     mov al,'-'
+   1400	    096F  74 19			     je	render_digit_output
+   1401	    0971  80 3E	0014r 00	     cmp editMode,0
+   1402	    0976  75 0C			     jne render_binary_digit
+   1403	    0978  C0 C6	04		     rol dh,4
+   1404	    097B  8A C6			     mov al,dh
+   1405	    097D  24 0F			     and al,0Fh
+   1406	    097F  E8 FE80		     call HexCharacter
+   1407	    0982  EB 06			     jmp render_digit_output
+   1408	    0984			 render_binary_digit:
+   1409	    0984  D0 E6			     shl dh,1
+   1410	    0986  B0 30			     mov al,'0'
+   1411	    0988  14 00			     adc al,0
+   1412	    098A			 render_digit_output:
+   1413	    098A  8A 26	0267r		     mov ah,renderAttr
+   1414	    098E  AB			     stosw
+   1415	    098F  E2 D3			     loop render_digit
+   1416					     ; ASCII preview: printable	7-bit characters only; EOF has no preview.
+   1417	    0991  66| A1 025Er		     mov eax,renderOffset
+   1418	    0995  66| 3B 06 0008r	     cmp eax,fileSize
+   1419	    099A  73 2F			     jae render_byte_done
+   1420	    099C  A1 0262r		     mov ax,renderRow
+   1421	    099F  05 0002		     add ax,DATA_TOP
+   1422	    09A2  E8 FE68		     call RowAddress
+   1423	    09A5  A1 0264r		     mov ax,renderColumn
+   1424	    09A8  05 003D		     add ax,61
+   1425	    09AB  80 3E	0014r 00	     cmp editMode,0
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 26
+BINED3.ASM
+
+
+
+   1426	    09B0  74 03			     je	render_ascii_position
+   1427	    09B2  05 0005		     add ax,5
+   1428	    09B5			 render_ascii_position:
+   1429	    09B5  D1 E0			     shl ax,1
+   1430	    09B7  03 F8			     add di,ax
+   1431	    09B9  A0 0266r		     mov al,renderValue
+   1432	    09BC  3C 20			     cmp al,32
+   1433	    09BE  72 04			     jb	render_ascii_dot
+   1434	    09C0  3C 7E			     cmp al,126
+   1435	    09C2  76 02			     jbe render_ascii_output
+   1436	    09C4			 render_ascii_dot:
+   1437	    09C4  B0 2E			     mov al,'.'
+   1438	    09C6			 render_ascii_output:
+   1439	    09C6  8A 26	0267r		     mov ah,renderAttr
+   1440	    09CA  AB			     stosw
+   1441	    09CB			 render_byte_done:
+   1442	    09CB  C3			     ret
+   1443	    09CC			 RenderByte endp
+   1444
+   1445	    09CC			 PlaceCursor proc
+   1446	    09CC  66| A1 000Cr		     mov eax,cursorOffset
+   1447	    09D0  66| 2B 06 0010r	     sub eax,viewOffset
+   1448	    09D5  66| 33 D2		     xor edx,edx
+   1449	    09D8  66| F7 36 0017r	     div bytesPerRow
+   1450	    09DD  04 02			     add al,DATA_TOP
+   1451	    09DF  8A F0			     mov dh,al
+   1452	    09E1  8A C2			     mov al,dl
+   1453	    09E3  B3 03			     mov bl,3
+   1454	    09E5  80 3E	0014r 00	     cmp editMode,0
+   1455	    09EA  74 02			     je	cursor_stride
+   1456	    09EC  B3 09			     mov bl,9
+   1457	    09EE			 cursor_stride:
+   1458	    09EE  F6 E3			     mul bl
+   1459	    09F0  04 0A			     add al,DATA_COLUMN
+   1460	    09F2  02 06	0015r		     add al,digitIndex
+   1461	    09F6  8A D0			     mov dl,al
+   1462	    09F8  32 FF			     xor bh,bh
+   1463	    09FA  B4 02			     mov ah,02h
+   1464	    09FC  CD 10			     int 10h
+   1465	    09FE  C3			     ret
+   1466	    09FF			 PlaceCursor endp
+   1467
+   1468					 ; ---------------------------------------------------------------------------
+   1469					 ; Small modal dialogs consume keys locally and	return;	they never enter the
+   1470					 ; editor loop.	DOS buffered console input is avoided in the video interface.
+   1471					 ; ---------------------------------------------------------------------------
+   1472	    09FF			 HelpDialog proc
+   1473	    09FF  06			     push es
+   1474	    0A00  B8 B800		     mov ax,0B800h
+   1475	    0A03  8E C0			     mov es,ax
+   1476	    0A05  BF 0500		     mov di,8 *	160
+   1477	    0A08  B4 02			     mov ah,ATTR_TITLE
+   1478	    0A0A  BE 032Ar		     mov si,offset helpText1
+   1479	    0A0D  E8 FDA3		     call PutString
+   1480	    0A10  BF 05A0		     mov di,9 *	160
+   1481	    0A13  BE 036Er		     mov si,offset helpText2
+   1482	    0A16  E8 FD9A		     call PutString
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 27
+BINED3.ASM
+
+
+
+   1483	    0A19  BF 0640		     mov di,10 * 160
+   1484	    0A1C  BE 03AFr		     mov si,offset helpText3
+   1485	    0A1F  E8 FD91		     call PutString
+   1486	    0A22  BF 06E0		     mov di,11 * 160
+   1487	    0A25  BE 03F2r		     mov si,offset helpText4
+   1488	    0A28  E8 FD88		     call PutString
+   1489	    0A2B  BF 0780		     mov di,12 * 160
+   1490	    0A2E  BE 02E9r		     mov si,offset keysText
+   1491	    0A31  E8 FD7F		     call PutString
+   1492	    0A34  32 E4			     xor ah,ah
+   1493	    0A36  CD 16			     int 16h
+   1494	    0A38  07			     pop es
+   1495	    0A39  C3			     ret
+   1496	    0A3A			 HelpDialog endp
+   1497
+   1498					 ; Clear rows 23/24, print SI prompt. ES is preserved.
+   1499	    0A3A			 DialogPrompt proc
+   1500	    0A3A  06			     push es
+   1501	    0A3B  B8 B800		     mov ax,0B800h
+   1502	    0A3E  8E C0			     mov es,ax
+   1503	    0A40  BF 0E60		     mov di,23 * 160
+   1504	    0A43  B8 0220		     mov ax,ATTR_TITLE * 256 + ' '
+   1505	    0A46  B9 00A0		     mov cx,160
+   1506	    0A49  F3> AB		     rep stosw
+   1507	    0A4B  BF 0E60		     mov di,23 * 160
+   1508	    0A4E  E8 FD62		     call PutString
+   1509	    0A51  07			     pop es
+   1510	    0A52  C3			     ret
+   1511	    0A53			 DialogPrompt endp
+   1512
+   1513	    0A53			 SaveAsDialog proc
+   1514	    0A53  C7 06	0268r 0000	     mov dialogLength,0
+   1515	    0A59  C6 06	00ABr 00	     mov inputPath,0
+   1516	    0A5E  BE 042Fr		     mov si,offset saveAsText
+   1517	    0A61  E8 FFD6		     call DialogPrompt
+   1518	    0A64			 save_as_redraw:
+   1519	    0A64  06			     push es
+   1520	    0A65  B8 B800		     mov ax,0B800h
+   1521	    0A68  8E C0			     mov es,ax
+   1522	    0A6A  BF 0F00		     mov di,24 * 160
+   1523	    0A6D  B8 0220		     mov ax,ATTR_TITLE * 256 + ' '
+   1524	    0A70  B9 0050		     mov cx,80
+   1525	    0A73  F3> AB		     rep stosw
+   1526	    0A75  BF 0F00		     mov di,24 * 160
+   1527	    0A78  BE 00ABr		     mov si,offset inputPath
+   1528	    0A7B  8B 1E	0268r		     mov bx,dialogLength
+   1529	    0A7F  83 FB	4E		     cmp bx,78
+   1530	    0A82  76 05			     jbe save_as_visible
+   1531	    0A84  83 EB	4E		     sub bx,78
+   1532	    0A87  03 F3			     add si,bx
+   1533	    0A89			 save_as_visible:
+   1534	    0A89  B4 02			     mov ah,ATTR_TITLE
+   1535	    0A8B  E8 FD25		     call PutString
+   1536	    0A8E  07			     pop es
+   1537	    0A8F  BA 1800		     mov dx,1800h
+   1538	    0A92  A1 0268r		     mov ax,dialogLength
+   1539	    0A95  3D 004E		     cmp ax,78
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 28
+BINED3.ASM
+
+
+
+   1540	    0A98  76 03			     jbe save_as_cursor
+   1541	    0A9A  B8 004E		     mov ax,78
+   1542	    0A9D			 save_as_cursor:
+   1543	    0A9D  8A D0			     mov dl,al
+   1544	    0A9F  32 FF			     xor bh,bh
+   1545	    0AA1  B4 02			     mov ah,02h
+   1546	    0AA3  CD 10			     int 10h
+   1547	    0AA5  32 E4			     xor ah,ah
+   1548	    0AA7  CD 16			     int 16h
+   1549	    0AA9  3C 1B			     cmp al,27
+   1550	    0AAB  74 5F			     je	save_as_done
+   1551	    0AAD  3C 0D			     cmp al,13
+   1552	    0AAF  74 3E			     je	save_as_accept
+   1553	    0AB1  3C 08			     cmp al,8
+   1554	    0AB3  74 25			     je	save_as_backspace
+   1555	    0AB5  3C 20			     cmp al,32
+   1556	    0AB7  72 AB			     jb	save_as_redraw
+   1557	    0AB9  3C 7F			     cmp al,127
+   1558	    0ABB  73 A7			     jae save_as_redraw
+   1559	    0ABD  3C 22			     cmp al,'"'
+   1560	    0ABF  74 A3			     je	save_as_redraw
+   1561	    0AC1  8B 1E	0268r		     mov bx,dialogLength
+   1562	    0AC5  83 FB	7F		     cmp bx,PATH_BYTES - 1
+   1563	    0AC8  73 9A			     jae save_as_redraw
+   1564	    0ACA  88 87	00ABr		     mov inputPath[bx],al
+   1565	    0ACE  43			     inc bx
+   1566	    0ACF  C6 87	00ABr 00	     mov inputPath[bx],0
+   1567	    0AD4  89 1E	0268r		     mov dialogLength,bx
+   1568	    0AD8  EB 8A			     jmp save_as_redraw
+   1569	    0ADA			 save_as_backspace:
+   1570	    0ADA  8B 1E	0268r		     mov bx,dialogLength
+   1571	    0ADE  0B DB			     or	bx,bx
+   1572	    0AE0  74 82			     jz	save_as_redraw
+   1573	    0AE2  4B			     dec bx
+   1574	    0AE3  C6 87	00ABr 00	     mov inputPath[bx],0
+   1575	    0AE8  89 1E	0268r		     mov dialogLength,bx
+   1576	    0AEC  E9 FF75		     jmp save_as_redraw
+   1577	    0AEF			 save_as_accept:
+   1578	    0AEF  83 3E	0268r 00	     cmp dialogLength,0
+   1579	    0AF4  74 16			     je	save_as_done
+   1580	    0AF6  BA 00ABr		     mov dx,offset inputPath
+   1581	    0AF9  E8 F7B2		     call SaveDocument
+   1582	    0AFC  72 0E			     jc	save_as_done
+   1583	    0AFE  BE 00ABr		     mov si,offset inputPath
+   1584	    0B01  BF 002Br		     mov di,offset fileName
+   1585	    0B04			 save_as_copy:
+   1586	    0B04  AC			     lodsb
+   1587	    0B05  88 05			     mov [di],al
+   1588	    0B07  47			     inc di
+   1589	    0B08  0A C0			     or	al,al
+   1590	    0B0A  75 F8			     jnz save_as_copy
+   1591	    0B0C			 save_as_done:
+   1592	    0B0C  C3			     ret
+   1593	    0B0D			 SaveAsDialog endp
+   1594
+   1595	    0B0D			 QuitDialog proc
+   1596	    0B0D  80 3E	001Fr 00	     cmp dirty,0
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 29
+BINED3.ASM
+
+
+
+   1597	    0B12  74 20			     je	quit_accept
+   1598	    0B14  BE 0455r		     mov si,offset quitText
+   1599	    0B17  E8 FF20		     call DialogPrompt
+   1600	    0B1A			 quit_wait:
+   1601	    0B1A  32 E4			     xor ah,ah
+   1602	    0B1C  CD 16			     int 16h
+   1603	    0B1E  3C 1B			     cmp al,27
+   1604	    0B20  74 17			     je	quit_cancel
+   1605	    0B22  0C 20			     or	al,20h
+   1606	    0B24  3C 64			     cmp al,'d'
+   1607	    0B26  74 0C			     je	quit_accept
+   1608	    0B28  3C 73			     cmp al,'s'
+   1609	    0B2A  75 EE			     jne quit_wait
+   1610	    0B2C  BA 002Br		     mov dx,offset fileName
+   1611	    0B2F  E8 F77C		     call SaveDocument
+   1612	    0B32  72 05			     jc	quit_cancel
+   1613	    0B34			 quit_accept:
+   1614	    0B34  C6 06	0020r 01	     mov quitRequested,1
+   1615	    0B39			 quit_cancel:
+   1616	    0B39  C3			     ret
+   1617	    0B3A			 QuitDialog endp
+   1618
+   1619
+   1620	    0B3A			 _TEXT ends
+   1621					 end Main
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 30
+Symbol Table
+
+
+
+
+Symbol Name			  Type	 Value
+
+??DATE				  Text	 "10/23/26"
+??FILENAME			  Text	 "BINED3  "
+??TIME				  Text	 "20:30:19"
+??VERSION			  Number 0205
+@CPU				  Text	 0D9FH
+@CURSEG				  Text	 _TEXT
+@FILENAME			  Text	 BINED3
+@WORDSIZE			  Text	 2
+ALLOCATEBUFFER			  Near	 _TEXT:0082
+ALLOCATE_FAILED			  Near	 _TEXT:00BD
+ALLOCATE_SUCCESS		  Near	 _TEXT:00AB
+ARGUMENTERROR			  Byte	 _DATA:0643
+ASCIITEXT			  Byte	 _DATA:02C4
+ASCIITOHEX			  Near	 _TEXT:048E
+ASCII_INVALID			  Near	 _TEXT:04A8
+ASCII_NUMBER			  Near	 _TEXT:04A4
+ATTR_NORMAL			  Number 000A
+ATTR_OFFSET			  Number 0002
+ATTR_SELECTED			  Number 000D
+ATTR_STATUS			  Number 000A
+ATTR_TITLE			  Number 0002
+BACKUPEXISTS			  Byte	 _DATA:024D
+BACKUPPATH			  Byte	 _DATA:01BB
+BACKWARD_IN_RANGE		  Near	 _TEXT:0593
+BEGINVIDEO			  Near	 _TEXT:0767
+BINTEXT				  Byte	 _DATA:02A5
+BUFFERCAPACITY			  Dword	 _DATA:0004
+BUFFERSEGMENT			  Word	 _DATA:0002
+BYTESPERROW			  Dword	 _DATA:0017
+CAPACITYTEXT			  Byte	 _DATA:02DC
+CHANGEDTEXT			  Byte	 _DATA:02A9
+CLOSEFILE			  Near	 _TEXT:0256
+COLUMNTEXT			  Byte	 _DATA:02B5
+CREATESIBLINGTEMP		  Near	 _TEXT:0265
+CURSOROFFSET			  Dword	 _DATA:000C
+CURSOR_DONE			  Near	 _TEXT:0585
+CURSOR_IN_RANGE			  Near	 _TEXT:0575
+CURSOR_STRIDE			  Near	 _TEXT:09EE
+DATA_COLUMN			  Number 000A
+DATA_ROWS			  Number 0014
+DATA_TOP			  Number 0002
+DELETEBYTE			  Near	 _TEXT:04F1
+DELETE_CHANGED			  Near	 _TEXT:051D
+DELETE_DONE			  Near	 _TEXT:0527
+DELETE_SHIFT			  Near	 _TEXT:0502
+DIALOGLENGTH			  Word	 _DATA:0268
+DIALOGPROMPT			  Near	 _TEXT:0A3A
+DIGITINDEX			  Byte	 _DATA:0015
+DIGITSPERBYTE			  Byte	 _DATA:0016
+DIRTY				  Byte	 _DATA:001F
+EDITDIGIT			  Near	 _TEXT:0403
+EDITMODE			  Byte	 _DATA:0014
+EDIT_ADVANCE			  Near	 _TEXT:0483
+EDIT_APPLY			  Near	 _TEXT:0462
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 31
+Symbol Table
+
+
+
+EDIT_BINARY			  Near	 _TEXT:045A
+EDIT_DONE			  Near	 _TEXT:0486
+EDIT_EXISTING			  Near	 _TEXT:043C
+EDIT_FULL			  Near	 _TEXT:0487
+EDIT_HEX_SHIFT			  Near	 _TEXT:0456
+EDIT_VALID			  Near	 _TEXT:0415
+ENDVIDEO			  Near	 _TEXT:0790
+ENSUREVISIBLE			  Near	 _TEXT:059A
+EXITCODE			  Byte	 _DATA:0021
+FATALERROR			  Near	 _TEXT:0059
+FILEHANDLE			  Word	 _DATA:024F
+FILENAME			  Byte	 _DATA:002B
+FILESIZE			  Dword	 _DATA:0008
+HANDLEKEY			  Near	 _TEXT:05F5
+HELPDIALOG			  Near	 _TEXT:09FF
+HELPTEXT1			  Byte	 _DATA:032A
+HELPTEXT2			  Byte	 _DATA:036E
+HELPTEXT3			  Byte	 _DATA:03AF
+HELPTEXT4			  Byte	 _DATA:03F2
+HEXCHARACTER			  Near	 _TEXT:0802
+HEXDIGITS			  Byte	 _DATA:026A
+HEXTEXT				  Byte	 _DATA:02A1
+INPUTPATH			  Byte	 _DATA:00AB
+INSERTBYTE			  Near	 _TEXT:04AA
+INSERT_FULL			  Near	 _TEXT:04EA
+INSERT_SHIFT			  Near	 _TEXT:04B6
+INSERT_ZERO			  Near	 _TEXT:04D1
+IOCOUNT				  Word	 _DATA:0259
+IOOFFSET			  Dword	 _DATA:0255
+IOOPERATION			  Byte	 _DATA:025B
+IOREMAINING			  Dword	 _DATA:0251
+IO_CHUNK			  Number 4000
+KEYSTEXT			  Byte	 _DATA:02E9
+KEY_BINARY			  Near	 _TEXT:0740
+KEY_DELETE			  Near	 _TEXT:0750
+KEY_DOWN			  Near	 _TEXT:0691
+KEY_END				  Near	 _TEXT:06CF
+KEY_END_DONE			  Near	 _TEXT:0704
+KEY_EXTENDED			  Near	 _TEXT:0619
+KEY_FILE_END			  Near	 _TEXT:0711
+KEY_FILE_HOME			  Near	 _TEXT:0705
+KEY_HELP			  Near	 _TEXT:075F
+KEY_HEX				  Near	 _TEXT:0746
+KEY_HOME			  Near	 _TEXT:06B3
+KEY_INSERT			  Near	 _TEXT:074C
+KEY_LEFT			  Near	 _TEXT:0681
+KEY_NEXT_BYTE			  Near	 _TEXT:0719
+KEY_PAGE_DOWN			  Near	 _TEXT:06A6
+KEY_PAGE_UP			  Near	 _TEXT:069E
+KEY_PREVIOUS_BYTE		  Near	 _TEXT:0728
+KEY_QUIT			  Near	 _TEXT:0763
+KEY_RIGHT			  Near	 _TEXT:0685
+KEY_SAVE			  Near	 _TEXT:0754
+KEY_SAVE_AS			  Near	 _TEXT:075B
+KEY_TOGGLE			  Near	 _TEXT:0737
+KEY_UP				  Near	 _TEXT:0689
+LARGEERROR			  Byte	 _DATA:06D8
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 32
+Symbol Table
+
+
+
+LASTERROR			  Word	 _DATA:025C
+LEFT_DIGIT			  Near	 _TEXT:0565
+LEFT_DONE			  Near	 _TEXT:0569
+LOADERROR			  Byte	 _DATA:06A5
+LOADFILE			  Near	 _TEXT:0199
+LOAD_CLOSE_FAILED		  Near	 _TEXT:01FC
+LOAD_FAILED			  Near	 _TEXT:0201
+LOAD_OPENED			  Near	 _TEXT:01B0
+LOAD_TOO_LARGE			  Near	 _TEXT:01F9
+MAIN				  Near	 _TEXT:0000
+MAIN_ARGUMENTS_READY		  Near	 _TEXT:002C
+MAIN_EVENT_LOOP			  Near	 _TEXT:0043
+MAIN_HELP			  Near	 _TEXT:0023
+MAIN_LOADED			  Near	 _TEXT:0040
+MAIN_LOAD_ERROR			  Near	 _TEXT:003B
+MAIN_MEMORY_READY		  Near	 _TEXT:0014
+MAPBUFFER			  Near	 _TEXT:00C0
+MAX_PARAGRAPHS			  Number 8000
+MEMORYERROR			  Byte	 _DATA:067F
+MOVEBACKWARD			  Near	 _TEXT:0586
+MOVELEFT			  Near	 _TEXT:054B
+MOVERIGHT			  Near	 _TEXT:0528
+MSGFULL				  Byte	 _DATA:0507
+MSGNEW				  Byte	 _DATA:04CF
+MSGREADONLY			  Byte	 _DATA:0575
+MSGREADY			  Byte	 _DATA:0493
+MSGSAVED			  Byte	 _DATA:0500
+MSGSAVEERROR			  Byte	 _DATA:0533
+OFFSETTEXT			  Byte	 _DATA:02CA
+OLDCURSORPOS			  Word	 _DATA:0027
+OLDCURSORSHAPE			  Word	 _DATA:0025
+OLDVIDEOMODE			  Byte	 _DATA:0023
+OLDVIDEOPAGE			  Byte	 _DATA:0024
+PAGEBYTES			  Dword	 _DATA:001B
+PARSECOMMANDLINE		  Near	 _TEXT:00ED
+PARSE_BAD			  Near	 _TEXT:0180
+PARSE_CHARACTER			  Near	 _TEXT:0143
+PARSE_COPY			  Near	 _TEXT:012C
+PARSE_END			  Near	 _TEXT:015B
+PARSE_FINISH			  Near	 _TEXT:0165
+PARSE_HELP			  Near	 _TEXT:017A
+PARSE_NAME			  Near	 _TEXT:0120
+PARSE_QUOTE			  Near	 _TEXT:0152
+PARSE_SUCCESS			  Near	 _TEXT:016E
+PARSE_TRAILING			  Near	 _TEXT:0171
+PATH_BYTES			  Number 0080
+PLACECURSOR			  Near	 _TEXT:09CC
+PSPSEGMENT			  Word	 _DATA:0000
+PUTHEX32			  Near	 _TEXT:07E1
+PUTSTRING			  Near	 _TEXT:07B3
+PUT_HEX32_NEXT			  Near	 _TEXT:07EC
+PUT_STRING_DONE			  Near	 _TEXT:07DD
+PUT_STRING_NEXT			  Near	 _TEXT:07C8
+QUITDIALOG			  Near	 _TEXT:0B0D
+QUITREQUESTED			  Byte	 _DATA:0020
+QUITTEXT			  Byte	 _DATA:0455
+QUIT_ACCEPT			  Near	 _TEXT:0B34
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 33
+Symbol Table
+
+
+
+QUIT_CANCEL			  Near	 _TEXT:0B39
+QUIT_WAIT			  Near	 _TEXT:0B1A
+READBYTE			  Near	 _TEXT:00D7
+RENAMEFILE			  Near	 _TEXT:03B6
+RENDERATTR			  Byte	 _DATA:0267
+RENDERBYTE			  Near	 _TEXT:0909
+RENDERCOLUMN			  Word	 _DATA:0264
+RENDEROFFSET			  Dword	 _DATA:025E
+RENDERROW			  Word	 _DATA:0262
+RENDERSCREEN			  Near	 _TEXT:0812
+RENDERVALUE			  Byte	 _DATA:0266
+RENDER_ASCII_DOT		  Near	 _TEXT:09C4
+RENDER_ASCII_HEADER		  Near	 _TEXT:086B
+RENDER_ASCII_OUTPUT		  Near	 _TEXT:09C6
+RENDER_ASCII_POSITION		  Near	 _TEXT:09B5
+RENDER_BINARY_DIGIT		  Near	 _TEXT:0984
+RENDER_BYTE_DIGITS		  Near	 _TEXT:095A
+RENDER_BYTE_DONE		  Near	 _TEXT:09CB
+RENDER_BYTE_POSITION		  Near	 _TEXT:0923
+RENDER_BYTE_STRIDE		  Near	 _TEXT:093C
+RENDER_COLUMNS			  Near	 _TEXT:0853
+RENDER_DIGIT			  Near	 _TEXT:0964
+RENDER_DIGIT_OUTPUT		  Near	 _TEXT:098A
+RENDER_MODE			  Near	 _TEXT:0843
+RENDER_NEXT_BYTE		  Near	 _TEXT:0897
+RENDER_NEXT_ROW			  Near	 _TEXT:087F
+RIGHT_DONE			  Near	 _TEXT:054A
+ROWADDRESS			  Near	 _TEXT:080D
+SAVEASDIALOG			  Near	 _TEXT:0A53
+SAVEASTEXT			  Byte	 _DATA:042F
+SAVEDOCUMENT			  Near	 _TEXT:02AE
+SAVETARGET			  Word	 _DATA:024B
+SAVE_AS_ACCEPT			  Near	 _TEXT:0AEF
+SAVE_AS_BACKSPACE		  Near	 _TEXT:0ADA
+SAVE_AS_COPY			  Near	 _TEXT:0B04
+SAVE_AS_CURSOR			  Near	 _TEXT:0A9D
+SAVE_AS_DONE			  Near	 _TEXT:0B0C
+SAVE_AS_REDRAW			  Near	 _TEXT:0A64
+SAVE_AS_VISIBLE			  Near	 _TEXT:0A89
+SAVE_BACKED_UP			  Near	 _TEXT:0342
+SAVE_CHECK_MISSING		  Near	 _TEXT:02CD
+SAVE_CLEANUP_ERROR		  Near	 _TEXT:0395
+SAVE_CREATE_STAGE		  Near	 _TEXT:02D4
+SAVE_ERROR			  Near	 _TEXT:03A6
+SAVE_INSTALL			  Near	 _TEXT:0347
+SAVE_READ_ONLY			  Near	 _TEXT:03AE
+SAVE_RESTORE			  Near	 _TEXT:0373
+SAVE_SUCCESS			  Near	 _TEXT:0366
+SAVE_TRANSFER_ERROR		  Near	 _TEXT:0390
+SETCURSOR			  Near	 _TEXT:056A
+SETMODE				  Near	 _TEXT:03BF
+SET_MODE_DONE			  Near	 _TEXT:03F9
+SHUTDOWN			  Near	 _TEXT:0064
+SHUTDOWN_EXIT			  Near	 _TEXT:007B
+SHUTDOWN_MEMORY			  Near	 _TEXT:006E
+SIZETEXT			  Byte	 _DATA:02D3
+SKIPTAILSPACES			  Near	 _TEXT:0186
+Turbo Assembler	 Version 2.5	    10/23/26 20:30:19	    Page 34
+Symbol Table
+
+
+
+SKIP_TAIL_ADVANCE		  Near	 _TEXT:0194
+SKIP_TAIL_DONE			  Near	 _TEXT:0198
+SKIP_TAIL_NEXT			  Near	 _TEXT:0186
+STACK_BYTES			  Number 1000
+STAGEEXISTS			  Byte	 _DATA:024E
+STAGEPATH			  Byte	 _DATA:012B
+STATUSTEXT			  Word	 _DATA:0029
+TEMP_COPY			  Near	 _TEXT:0280
+TEMP_COPY_NEXT			  Near	 _TEXT:0284
+TEMP_PREFIX_DONE		  Near	 _TEXT:0290
+TEMP_RELATIVE			  Near	 _TEXT:029A
+TEMP_SCAN			  Near	 _TEXT:0269
+TEMP_SEPARATOR			  Near	 _TEXT:027C
+TEMP_TERMINATE			  Near	 _TEXT:02A4
+TITLETEXT			  Byte	 _DATA:027A
+TRANSFERFILE			  Near	 _TEXT:0203
+TRANSFER_COUNT_READY		  Near	 _TEXT:021A
+TRANSFER_DONE			  Near	 _TEXT:0254
+TRANSFER_FAILED			  Near	 _TEXT:0252
+TRANSFER_NEXT			  Near	 _TEXT:0203
+TRANSFER_SHORT			  Near	 _TEXT:024F
+USAGETEXT			  Byte	 _DATA:05A6
+VIDEOACTIVE			  Byte	 _DATA:0022
+VIEWOFFSET			  Dword	 _DATA:0010
+VISIBLE_ALIGN_CURSOR		  Near	 _TEXT:05E2
+VISIBLE_DONE			  Near	 _TEXT:05F4
+WRITEBYTE			  Near	 _TEXT:00E2
+
+Groups & Segments		  Bit Size Align  Combine Class
+
+DGROUP				  Group
+  _DATA				  16  0712 Word	  Public  DATA
+_STACK				  16  1000 Para	  Stack	  STACK
+_TEXT				  16  0B3A Word	  Public  CODE
+

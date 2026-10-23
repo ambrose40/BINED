@@ -1,0 +1,4 @@
+EZ Binary Editor 3 (486+, DOS 3.0+)
+Usage: BINED3 [filename]
+       BINED3 "path with spaces"
+Missing files start empty. F1: help, F2: save, Esc: quit.

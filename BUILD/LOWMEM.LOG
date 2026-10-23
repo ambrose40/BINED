@@ -1,0 +1,6 @@
+256 kb allocated.
+PASS: command tail, memory boundaries, editing, navigation,
+      10000 dispatches, rendering, DOS load/save and errors.
+NOTE: mounted DOS drive ignores read-only attributes;
+      directory-target protection tested instead.
+256 kb freed.
