@@ -1,6 +1,6 @@
 # EZ Binary Editor 3
 
-`BINED3.ASM` is a rewritten DOS hex/binary editor built with the supplied
+`BINED3.ASM` is a rewritten DOS hex/binary/ASCII editor built with the supplied
 TASM 2.5 and TLINK 4.0. The runnable output is **`BUILD\BINED3.EXE`**.
 
 ## Build, run, and test
@@ -100,16 +100,19 @@ details.
 
 | Key | Action |
 | --- | --- |
-| `0`–`9`, `A`–`F` | Overwrite one hex digit; lowercase also works |
+| `0`–`9`, `A`–`F` in hex mode | Overwrite one hex digit; lowercase also works |
 | `0`, `1` in binary mode | Overwrite one bit, most significant bit first |
-| Tab | Switch between hex and binary |
-| F5 / F6 | Binary / hex mode |
-| Left / Right | Previous / next digit or bit |
+| Printable characters in ASCII mode | Overwrite one whole byte, including spaces; preserve case |
+| Tab | Switch HEX ↔ BIN view, keeping ASCII or numeric editing focus |
+| F5 / F6 | Binary / hex view with digit/bit editing |
+| F7 | Toggle ASCII ↔ numeric editing in the current HEX or BIN view |
+| Left / Right | Previous / next hex digit, bit, or ASCII byte |
 | Up / Down | Previous / next row |
 | PgUp / PgDn | Previous / next screenful |
-| Home / End | First / last digit of the current row |
+| Home / End | First / last digit, bit, or ASCII byte of the current row |
 | Ctrl-Home / Ctrl-End | Start of file / EOF append position |
-| Space / Backspace | Next / previous byte |
+| Space | Next byte in HEX/BIN; type a space in ASCII |
+| Backspace | Previous byte (does not delete) |
 | Insert | Insert a zero byte before the cursor |
 | Delete | Remove the byte at the cursor |
 | F1 | Open the centred help window; any key returns |
@@ -117,17 +120,25 @@ details.
 | F4 | Save as; Enter accepts, Esc cancels |
 | Esc | Quit; modified files prompt for Save, Discard, or Esc to cancel |
 
-The selected byte is highlighted. Hex mode shows 16 bytes per row; binary
-mode shows 6. Both include a printable ASCII preview. Offsets, file size and
-buffer capacity are displayed in **hexadecimal**.
+The selected byte is highlighted. HEX view shows 16 bytes per row; BIN view
+shows 6. F7 puts the editing cursor in the current view's right-hand ASCII
+column, keeping its layout, viewport, and hex digits or binary bits visible.
+The title shows **ASCII (HEX)** or **ASCII (BIN)**. Tab switches the layout
+while keeping ASCII or numeric editing focus. F7 toggles that focus without
+changing the layout or viewport. For example:
+**HEX → F7 → ASCII (HEX) → Tab → ASCII (BIN) → Tab → ASCII (HEX) → F7 → HEX → Tab → BIN → Tab → HEX**.
+Left/Right move one byte at a time in ASCII mode. All modes show
+printable ASCII characters (`20h`–`7Eh`); other bytes appear as dots.
+Offsets, file size and buffer capacity are displayed in **hexadecimal**.
 
 The editor uses a **green-on-black** theme: bright-green hex/binary data and
 status labels, dark-green row offsets, and purple selected-byte highlights in
 the hex/binary data. The **filename and Save As input are also purple**.
 The editor title is **bright white**,
 the **OFFSET, DATA, and ASCII column labels are bright red**,
-the active **HEX/BIN mode is bright yellow**, and the
-right-hand **ASCII preview is light gray**, including the selected byte.
+the active **HEX/BIN/ASCII mode is bright yellow**, and the
+right-hand **ASCII preview is light gray**. In ASCII mode the selected
+character or EOF marker is purple; in HEX/BIN the entire preview stays gray.
 The numeric **Offset, Size, and Capacity values are dark purple**;
 the **bottom status line and Save As/unsaved-quit prompts are light gray**.
 F1 opens a centred, black-filled window
@@ -138,10 +149,15 @@ The editing cursor is hidden while help is open. All backgrounds stay
 black. The `ATTR_*` constants near the top of `BINED3.ASM` define the palette
 using standard VGA text attributes.
 
-The `--` / `--------` entry marks EOF. Typing there appends a zero-initialized
-byte and changes its selected digit/bit. Typing within the file preserves the
-other bits of that byte. Insert/Delete change file length; ordinary typing
-overwrites. Delete at EOF is a no-op. There is no undo command.
+The `--` / `--------` entry marks EOF, with an additional `-` in the ASCII
+editing column. Typing at EOF appends a byte. HEX/BIN start that byte at zero
+and change its selected digit/bit; typing within the file preserves its other
+bits. ASCII writes the typed character's complete byte and advances to the
+next byte. ASCII accepts printable 7-bit characters, including spaces and
+punctuation; Enter and other unassigned control/non-ASCII characters are
+ignored. Use HEX/BIN to enter control bytes such as CR/LF, tabs, or values
+above `7Eh`. Insert/Delete change file length; ordinary typing overwrites.
+Delete at EOF is a no-op. There is no undo command.
 
 ## Memory and CPU design
 
@@ -171,7 +187,7 @@ DGROUP holds only editor state and paths, never the file contents.
 - **Arguments and disk:** `ParseCommandLine`, `LoadFile`, `TransferFile`,
   `SaveDocument` and small handle/rename helpers.
 - **Byte storage:** `MapBuffer`, `ReadByte`, `WriteByte`.
-- **Editing/navigation:** `EditDigit`, `InsertByte`, `DeleteByte`,
+- **Editing/navigation:** `EditDigit`, `EditAscii`, `InsertByte`, `DeleteByte`,
   `SetMode`, movement procedures, `EnsureVisible`.
 - **Input:** `HandleKey` dispatches one BIOS key and returns.
 - **Display:** `RenderScreen`, `RenderByte`, bounded text/hex output,
@@ -242,23 +258,30 @@ call TESTS\TEST.BAT
 Or run the build and tests unattended from PowerShell:
 
 ```powershell
-.\DOSBOX\DOSBox.exe -conf dosbox_bined.conf -noautoexec `
-  -c 'mount c "."' -c 'c:' -c 'call BUILD.BAT' `
-  -c 'call TESTS\TEST.BAT' -c 'exit'
+Start-Process -FilePath '.\DOSBOX\DOSBox.exe' -ArgumentList `
+  '-conf dosbox_bined.conf -noautoexec -c "mount c ." -c "c:" -c "call BUILD.BAT" -c "call TESTS\TEST.BAT" -c "exit"' -Wait
 python TESTS\VERIFY.PY
 ```
 
+`-Wait` ensures the DOSBox GUI process finishes before host verification reads
+the output files and logs.
+
 The tests generate artifacts only under `BUILD`. The procedure-level test
-EXE exercises command tails, EOF editing, hex/binary conversion, full/empty
-bounds, insert/delete across 64 KiB, navigation, 10,000 dispatch cycles
-(60,000 key events) with unchanged SP, screen bounds/cursor rendering,
+EXE exercises command tails, EOF editing, ASCII focus in HEX and BIN views,
+all 95 printable ASCII characters, space input, ignored controls, unchanged
+overwrite dirty state, full/empty bounds, ASCII overwrite and insert/delete
+across 64 KiB, navigation, 10,000 dispatch cycles
+(90,000 key events) with unchanged SP, screen bounds/cursor rendering,
 status colours, modal help layout/bounds and editor redraw, a
 131,089-byte disk round trip, replacement saves, oversized loads and short
 reads. It requires at least 131,089 bytes of available file-buffer memory.
 
 `KEYDRIVE.COM` separately runs the **release EXE** via DOS EXEC, supplying
-BIOS keystrokes for help, hex/binary editing, insert/delete, save-as and
-save-and-quit. `VERIFY.PY` independently checks the exact output bytes and
+BIOS keystrokes for help, hex/binary/ASCII editing, independent Tab view and
+F7 focus toggling (including the sequence above), ASCII spaces
+and punctuation, insert/delete, save-as and save-and-quit. The final UI output
+is `FF 7A 20 21 3F 20 48` (`FF` followed by `z !? H`).
+`VERIFY.PY` independently checks the exact output bytes and
 absence of leftover staging files. No test code is included in the release
 editor.
 

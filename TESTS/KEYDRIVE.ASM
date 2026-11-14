@@ -110,7 +110,7 @@ fcb2Segment     dw 0
 commandTail     db tailEnd - tailText
 tailText        db ' BUILD\TESTDATA\UI.BIN'
 tailEnd         db 13
-passedText      db 'PASS: release EXE startup, help, editing, save-as, save-and-quit.',13,10,'$'
+passedText      db 'PASS: release EXE help, hex/binary/ASCII, save-as, save-and-quit.',13,10,'$'
 failedText      db 'FAIL: release EXE integration test.',13,10,'$'
 keys:
     dw 3B00h,0078h                ; F1, x: help and dismissal
@@ -126,6 +126,21 @@ keys:
     dw 'U','I','2','.','B','I','N',13
     dw 003Fh                     ; invalid hex character: ignored
     dw 'F','F'                   ; change first byte: FF 44
+    dw 4100h                     ; F7 ASCII: cursor already at byte 1
+    dw 'z',' ','!'               ; overwrite then append: FF 7A 20 21
+    dw 0009h,0009h              ; ASCII (HEX) -> ASCII (BIN) -> ASCII (HEX)
+    dw 4100h                    ; F7 -> HEX numeric editing
+    dw 0009h,0009h              ; HEX -> BIN -> HEX
+    dw 0009h                    ; BIN numeric editing
+    dw '0','1','0','0'          ; append binary 01000001 (41)
+    dw '0','0','0','1'
+    dw 4100h                    ; F7 ASCII in binary layout
+    dw 4B00h,'?'                ; overwrite last byte with printable punctuation
+    dw 3B00h,'x'                ; help/dismiss while ASCII mode active
+    dw ' '                      ; append a space in binary ASCII focus
+    dw 0009h                    ; Tab -> ASCII (HEX), retaining ASCII focus
+    dw 'H'                      ; append in hex ASCII focus
+    dw 4100h,0009h,0009h        ; F7 -> HEX, Tab -> BIN, Tab -> HEX
     dw 011Bh,'s'                 ; Esc, save-and-quit
 keysEnd:
     db 512 dup (?)

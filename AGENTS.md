@@ -11,6 +11,8 @@
 - A changeset means one completed logical task, whether or not it is committed.
   Update the memory before the final response, including documentation-only
   changes. Do not create commits merely to satisfy this requirement.
+- **Before every commit**, review and update both project memory files to
+  include all completed changes being committed and their actual verification.
 - Each changelog entry must state the request, files/behavior changed,
   verification actually performed, and any remaining issue. Distinguish
   previous test results from tests run for the current changeset.

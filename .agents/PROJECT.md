@@ -1,10 +1,10 @@
 # EZ Binary Editor: project memory
 
-Last updated: 2026-10-24.
+Last updated: 2026-11-14.
 
 ## Purpose and user preferences
 
-This is a DOS hex/binary editor rewritten from an abandoned assembly project.
+This is a DOS hex/binary/ASCII editor rewritten from an abandoned assembly project.
 The user's original blockers were memory corruption and stack resets. They
 requested a readable, procedure-based `BINED3.ASM`, 486-class instructions,
 command-line file loading, and hex/binary editing of modest-size files.
@@ -17,18 +17,24 @@ Persistent user requirements:
   sources stored under `BUILD`; do not blanket-clean that directory.
 - Use green over black, dark-green secondary text, and purple highlights.
 - Main title is bright white; OFFSET/DATA/ASCII column labels are bright red.
-  The active HEX/BIN label is bright yellow, and all right-hand ASCII preview
-  symbols are light gray (including the selected byte); hex/binary selection
-  remains purple.
+  The active HEX/BIN/ASCII label is bright yellow. Right-hand ASCII preview
+  symbols are light gray in HEX/BIN (including the selected byte); in ASCII
+  mode the selected character/EOF marker is purple. Hex/binary selection
+  remains purple in the data column.
   The filename and Save As input are purple; the bottom status line and
   Save As/unsaved-quit prompts are light gray.
 - F1 help uses a centred, bordered modal text window with one instruction
   per line, bright-yellow key names, and light-gray descriptions/EOF note.
   The any-key return description stays dark green.
   Offset/Size/Capacity numeric values are dark purple.
-- Update this memory and the changelog after every changeset; root
-  `AGENTS.md` makes that instruction discoverable for future agents.
+- Update this memory and the changelog after every changeset, and review/update
+  both before every commit with all completed work and actual verification.
+  Root `AGENTS.md` makes both requirements discoverable for future agents.
 - Use Conventional Commits messages (`type(scope): summary`) when committing.
+- ASCII editing must work in both numeric layouts. F7 toggles ASCII/numeric
+  editing in the current view; Tab changes HEX/BIN while preserving focus:
+  HEX -> F7 -> ASCII (HEX) -> Tab -> ASCII (BIN) -> Tab -> ASCII (HEX) ->
+  F7 -> HEX -> Tab -> BIN -> Tab -> HEX.
 
 ## Active files
 
@@ -60,9 +66,18 @@ including those historical deletions, build/test artifacts, debugging sources,
 and sample binaries. The original Git baseline is `70fb131` (initial legacy
 code). Preserve explicitly staged user files when preparing such a commit;
 do not silently discard generated artifacts or debugging references.
-The modal-help/palette update is packaged together with its regression checks,
-README/memory updates, and the already-tracked rebuilt EXE/OBJ/LST/MAP/log
-artifacts under `BUILD`, using a `feat(ui)` Conventional Commits message.
+Current history confirms the rewrite at `c220f36`, a subsequent `4242af6`
+cleanup removing `System Volume Information/IndexerVolumeGuid`, and the
+modal-help/palette update at `6b7cc88` (`feat(ui): redesign F1 help and refine
+editor colours`). That update includes regression checks, README/memory, and
+tracked EXE/OBJ/LST/MAP/log artifacts under `BUILD`. The worktree was clean
+before the ASCII-mode task; earlier deletions described above are historical.
+The completed ASCII feature and final independent Tab/F7 workflow are prepared
+for a `feat(editor)` commit with updated help, regression checks, README/memory,
+pre-commit memory instructions, and tracked rebuilt BUILD artifacts. Branch
+`master` tracks `origin/master` at `https://github.com/ambrose40/BINED.git`.
+Separate user edits in `LAUNCH.BAT` (usage examples and extra echo lines) were
+present at packaging time and are left uncommitted by this editor-feature task.
 
 ## Architecture and invariants
 
@@ -81,6 +96,26 @@ artifacts under `BUILD`, using a `feat(ui)` Conventional Commits message.
   contents are kept in the separate DOS allocation.
 - Bytes in memory are authoritative. Rendering/mode changes never parse
   characters back from video memory.
+- `editMode`: 0 = HEX digit editing, 1 = BIN bit editing, 2 = ASCII byte editing.
+  Independent `viewMode` is 0 = HEX layout, 1 = BIN layout. F5/F6 select BIN/HEX
+  layout and numeric editing; F7 toggles ASCII/numeric focus without changing
+  layout or viewport. Tab toggles `viewMode` while retaining ASCII focus or
+  selecting numeric editing for the new layout. Mode/focus changes reset
+  digitIndex and preserve cursorOffset/file contents. viewOffset resets when
+  the numeric layout changes; selecting the same layout or toggling F7 preserves
+  it. HEX layout uses 16 bytes per row (320 per page),
+  BIN uses 6 (120 per page), including when ASCII editing is active.
+  `digitsPerByte` is 2/8/1 for navigation. Renderers use viewMode independently
+  to retain two hex digits or eight binary bits while ASCII has editing focus.
+- ASCII mode uses the right-hand column (zero-based 61 in HEX, 66 in BIN) for
+  its cursor and purple character/EOF selection. The yellow title says
+  `ASCII (HEX)` or `ASCII (BIN)`. `EditAscii` overwrites/appends a complete
+  printable 7-bit byte (`20h`..`7Eh`) and advances one byte. Space types `20h`
+  in ASCII; it still navigates in HEX/BIN. Backspace navigates without deletion.
+  Unassigned controls (including Enter), DEL, and extended characters are
+  ignored; edit non-printable bytes with HEX/BIN. Existing non-printable bytes
+  display as dots. Identical overwrites preserve the dirty flag. Full-buffer
+  EOF input reports `msgFull`, but existing bytes can still be overwritten.
 - Cursor may equal file size: EOF is an append position. Overwrite preserves
   other bits; newly appended bytes are zero-initialized. Insert/Delete shift
   bytes. Files exceeding actual buffer capacity are rejected.
@@ -107,8 +142,8 @@ The `ATTR_*` constants near the top of `BINED3.ASM` define VGA text attributes:
 | `ATTR_HELP_KEY` | `0Eh` | Bright-yellow key names in F1 help |
 | `ATTR_HEADING` | `0Fh` | Bright-white editor title |
 | `ATTR_COLUMN` | `0Ch` | Bright-red OFFSET/DATA/ASCII column labels |
-| `ATTR_MODE` | `0Eh` | Bright-yellow active HEX/BIN label |
-| `ATTR_ASCII` | `07h` | Light-gray ASCII preview (including selection) and F1 descriptions/EOF note |
+| `ATTR_MODE` | `0Eh` | Bright-yellow active HEX/BIN/ASCII label |
+| `ATTR_ASCII` | `07h` | Light-gray ASCII preview and F1 descriptions/EOF note; ASCII edit selection uses `ATTR_SELECTED` |
 
 All backgrounds are black. Existing video assertions check selected `A` as
 `0D41h` and selected EOF `-` as `0D2Dh`. Additional assertions cover numeric
@@ -122,9 +157,9 @@ attribute, while the typed path uses `ATTR_SELECTED`.
 `HelpDialog` hides the hardware editing cursor, calls `RenderHelpWindow`,
 consumes one BIOS key, restores the cursor shape, and returns to Main for
 the normal editor redraw. It does not modify file contents or navigation.
-`RenderHelpWindow` clears only a centred 58-column by 19-row rectangle at
-column 11, row 3 (zero-based), then draws a purple CP437 border/title,
-15 instruction lines with yellow key names and light-gray descriptions,
+`RenderHelpWindow` clears only a centred 58-column by 21-row rectangle at
+column 11, row 2 (zero-based), then draws a purple CP437 border/title,
+17 instruction lines with yellow key names and light-gray descriptions,
 and an any-key return prompt with a yellow key label/dark-green description.
 The `helpLines` pointer table places one instruction/sentence on each row.
 `PutHelpLine` draws each string in its description colour, then highlights
@@ -153,17 +188,22 @@ call TESTS\TEST.BAT
 
 With no filename the editor opens/creates `UNTITLED.BIN`; missing files start
 empty. One quoted filename is accepted, subject to DOS-visible/8.3 paths.
-F1 help, F2 save, F4 save-as, F5 binary, F6 hex, Tab mode, Esc quit.
+F1 help, F2 save, F4 save-as, F5 binary, F6 hex, F7 toggles ASCII/numeric focus,
+Tab switches HEX/BIN while retaining editing focus, Esc quit.
 
 Unattended build/test, followed by independent host verification:
 
 ```powershell
-.\DOSBOX\DOSBox.exe -conf dosbox_bined.conf -noautoexec `
-  -c 'mount c "."' -c 'c:' -c 'call BUILD.BAT' `
-  -c 'call TESTS\TEST.BAT' -c 'exit'
+Start-Process -FilePath '.\DOSBOX\DOSBox.exe' -ArgumentList `
+  '-conf dosbox_bined.conf -noautoexec -c "mount c ." -c "c:" -c "call BUILD.BAT" -c "call TESTS\TEST.BAT" -c "exit"' -Wait
 python TESTS\VERIFY.PY
-git diff --check
+git diff --check -- AGENTS.md BINED3.ASM README.md TESTS .agents
 ```
+
+Use `Start-Process -Wait`: a direct GUI EXE invocation can return before DOSBox
+finishes, causing host verification to read stale/incomplete output. The full
+`git diff --check` reports native DOS-generated whitespace in tracked LST/MAP/
+log files; preserve these artifacts and check authored source/docs separately.
 
 Prefer TASM output-directory syntax, e.g. `BINED3.ASM,BUILD\,BUILD\`.
 Explicit existing `.OBJ` output paths produced a repeat-build path issue
@@ -171,30 +211,45 @@ with this bundled environment.
 
 ### Coverage and last verified results
 
-Last runtime verification was the palette-assertion synchronization changeset
-on 2026-10-24, after the user's gray-footer/help and purple-filename/input
-edits. `TESTS/CORE.INC` now expects light-gray `0746h` for the footer `F` and
-`076Dh`/`0741h` for help description/EOF text. The stale-colour follow-up is
-resolved; the DOS suite and host byte verification passed with this palette.
+Last runtime verification was the independent Tab/F7 controls follow-up on
+2026-11-14.
+Production/core/release integration and host byte verification passed using
+the waited DOSBox command above. Earlier palette assertions remain covered.
+For commit packaging, host verification was rerun successfully and authored
+source/documentation whitespace checks passed. DOS runtime tests were not
+repeated for packaging; their results are from the final Tab/F7 changeset.
 
 - Production and test sources assembled without warnings with bundled
   TASM/TLINK. Preserved debugging sources were not rebuilt for this changeset.
 - Core tests and release EXE integration passed via the unattended DOSBox
   build/test command above.
-- Core coverage includes parsing, hex/binary editing, EOF/full/empty bounds,
-  cross-64-KiB insertion/deletion, navigation, rendering/cursor bounds,
-  10,000 dispatch cycles (60,000 key events) with unchanged SP, multi-chunk
+- Core coverage includes parsing, hex/binary/ASCII editing, EOF/full/empty bounds,
+  cross-64-KiB insertion/deletion and ASCII overwrite, navigation, rendering/cursor bounds,
+  10,000 dispatch cycles (90,000 key events) with unchanged SP, multi-chunk
   I/O, replacement saves, capacity rejection, and short-read errors. New
   checks cover status colours, modal help border/line layout, interior
   clearing, unchanged surrounding cells, and editor redraw without data edits.
   Help colour assertions also check yellow key names, light-gray descriptions,
   the digit-input label, the light-gray EOF note, and the return prompt.
-  Main-view assertions check the white title, red column labels, yellow HEX and BIN
-  labels, and gray ASCII preview symbols in both display modes.
-- Release integration exercises help, hex/binary input, insert/delete,
-  save-as, and save-and-quit using the actual production EXE.
+  Main-view assertions check the white title, red column labels, yellow mode
+  labels, gray preview, purple ASCII selection/EOF, retained hex digits/binary
+  bits, and right-column cursor including scrolled EOF in both views.
+  ASCII tests check all 95 printable characters, case/space/punctuation,
+  ignored controls/DEL/high bytes,
+  unchanged-overwrite dirty state, empty-file append, Insert/Delete, full-buffer
+  rejection/overwrite, byte/row navigation, Tab view switching in both focus
+  states, and F7 ASCII/numeric toggling in each layout. Both core and release
+  integration exercise the user's exact Tab/F7 sequence. BIN-ASCII checks
+  include six-byte rows, page movement, preserved viewport/reset digitIndex on
+  F7 entry/exit, unchanged data/dirty state on Tab,
+  printable overwrite/space/append, column 66 selection/EOF, binary rendering,
+  and scrolled EOF cursor bounds.
+- Release integration exercises help in HEX and BIN-ASCII, hex/binary input
+  and ASCII in both layouts, Tab/F7 transitions, space/punctuation input,
+  insert/delete, save-as, and save-and-quit using the actual production EXE.
 - Python verified `ROUND.BIN` (131,089 pattern bytes), `EMPTY.BIN` (empty),
-  `UI2.BIN` (`FF 44`), absent `UI.BIN`, and no test-directory staging leftovers.
+  `UI2.BIN` (`FF 7A 20 21 3F 20 48`, i.e. FF followed by `z !? H`), absent `UI.BIN`,
+  and no test-directory staging leftovers.
 - Expected `ROUND.BIN` SHA-256:
   `555e538c02e4151ffb942d0227251d8a8d585368c7bf68c9e58ffac233281fdf`.
 - Earlier (2026-10-23) reduced-memory checks passed with 256 KiB reserved by LOADFIX;

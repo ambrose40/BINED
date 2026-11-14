@@ -195,3 +195,113 @@ introduced on 2026-10-23.
   were repeated for this commit-only task.
 - **Remaining:** None for packaging; existing DOSBox attribute-reporting
   limitation remains.
+
+## 2026-11-14 — Refresh memory and add ASCII editing mode
+
+- **Request:** Bring project memory up to date with all completed work, require
+  updates before every commit, and add a third ASCII text-editing mode with
+  assigned keys, help, and tests.
+- **Changes:** Reconciled `.agents/PROJECT.md` with source and the clean initial
+  worktree/history: rewrite `c220f36`, cleanup `4242af6` (removed the tracked
+  IndexerVolumeGuid), and help/palette commit `6b7cc88`. Prior entries retain
+  the detailed rewrite, launcher, debugging-source, palette, and test history.
+  Added the explicit pre-commit memory-review/update requirement to `AGENTS.md`
+  and current memory. In `BINED3.ASM`, F7 selects ASCII; Tab cycles HEX -> BIN
+  -> ASCII -> HEX. ASCII retains the 16-byte hex layout and edits in the right
+  column, highlights the selected character/EOF in purple, overwrites/appends
+  printable 7-bit characters (including spaces), preserves case, and advances
+  by one byte. Backspace navigates; controls/non-ASCII input are ignored.
+  Expanded modal help from 58x19 to 58x21 for 17 instruction lines. Updated
+  `README.md`, core DOS tests, release-EXE key driver, Python exact-byte
+  verification, and tracked rebuilt editor/test artifacts under `BUILD`.
+  Documented `Start-Process -Wait` for unattended DOSBox testing to avoid
+  reading output before the GUI process finishes.
+- **Verification:** Built and ran `TESTS\TEST.BAT` in bundled DOSBox with
+  TASM/TLINK; core and release integration passed, and assembly was warning-
+  and error-free. New core checks cover all 95 printable characters, spaces,
+  mode selection/cycling, ignored input, dirty-state preservation, empty/EOF/
+  full bounds, byte/row movement, ASCII Insert/Delete, cross-64-KiB overwrite,
+  right-column cursor/selection, scrolled EOF, and expanded help. The dispatch
+  stress test now checks 90,000 key events over 10,000 cycles with unchanged SP.
+  Initial host byte verification exposed an extra Right-arrow in the test
+  driver's ASCII sequence; corrected the driver and reran build/DOS/host tests.
+  `python TESTS\VERIFY.PY` passed: unchanged 131,089-byte pattern round trip,
+  empty save, final UI bytes `FF 7A 20 21 3F`, absent original UI save-as path,
+  and clean staging directory. Authored source/documentation diff check passed;
+  full diff check reports native generated whitespace in BUILD LST/MAP/log
+  artifacts, as in earlier changesets.
+- **Remaining:** None for this request. Existing DOSBox mounted-drive attribute
+  reporting limitation remains. Reduced-memory and launcher automation results
+  are historical and were not rerun for this changeset. No commit was requested.
+
+## 2026-11-14 — ASCII editing in both HEX and BIN views
+
+- **Request:** Allow ASCII editing in BIN as well as HEX, with the workflow
+  HEX -> F7 -> ASCII -> Tab -> BIN -> F7 -> ASCII.
+- **Changes:** Split numeric layout (`viewMode`) from editing focus (`editMode`)
+  in `BINED3.ASM`. F7 preserves the current layout/viewport and selects ASCII;
+  Tab switches to the opposite numeric view and digit/bit editing. F5/F6
+  retain direct BIN/HEX selection. ASCII now keeps 16-byte HEX or six-byte BIN
+  rows, the matching hex digits/binary bits, and a cursor/highlight/EOF at
+  column 61 or 66. Titles distinguish `ASCII (HEX)` and `ASCII (BIN)`. Updated
+  F1 help, README controls/workflow, `TESTS/CORE.INC`, `TESTS/KEYDRIVE.ASM`,
+  `TESTS/VERIFY.PY`, project memory, and tracked rebuilt BUILD artifacts.
+  Preserved the existing uncommitted ASCII-mode changeset and debugging files.
+- **Verification:** Ran the documented waited DOSBox build and `TESTS\TEST.BAT`;
+  core and release-EXE integration passed. `python TESTS\VERIFY.PY` confirmed
+  error-/warning-free assembly, the 131,089-byte round trip and empty save,
+  exact UI output `FF 7A 20 21 3F 20 48`, absent original UI path, and no
+  staging leftovers. Added checks for BIN -> F7 layout/viewport retention,
+  ASCII whole-byte overwrite/space/append in BIN, six-byte row/page navigation,
+  Tab exit from either ASCII layout, preserved data/dirty state, eight-bit
+  binary rendering, column-66 ASCII selection/EOF, and scrolled cursor bounds.
+  Existing HEX-ASCII and 90,000-key-event stack checks also passed. Reviewed
+  source/docs/test diffs and ran the authored-file whitespace check successfully.
+- **Remaining:** None for this request. The previously documented DOSBox
+  attribute-reporting limitation remains; reduced-memory/launcher automation
+  checks were not rerun. No commit was requested.
+
+## 2026-11-14 — Independent Tab view switching and F7 focus toggling
+
+- **Request:** Use the exact sequence HEX -> F7 -> ASCII (HEX) -> Tab ->
+  ASCII (BIN) -> Tab -> ASCII (HEX) -> F7 -> HEX -> Tab -> BIN -> Tab -> HEX.
+- **Changes:** Updated `BINED3.ASM`: Tab changes HEX/BIN layout while preserving
+  ASCII or numeric editing focus, and F7 toggles ASCII/numeric focus within
+  the current layout. F7 entry/exit preserve the viewport and reset digitIndex;
+  selecting an unchanged numeric layout also retains its viewport. F5/F6
+  retain direct numeric mode selection. Updated F1 help, README, current project
+  memory, core transition/viewport checks, and release integration key sequence;
+  rebuilt tracked BUILD artifacts. The final UI byte expectation is unchanged.
+  Preserved prior uncommitted work and debugging sources.
+- **Verification:** Ran the documented waited DOSBox build and `TESTS\TEST.BAT`.
+  Core tests and release-EXE integration passed, including the requested exact
+  sequence, numeric/ASCII navigation widths, F7 return to binary bits, viewport
+  retention on F7 entry/exit, unchanged data/dirty state, and the existing
+  90,000-key-event stack check. `python TESTS\VERIFY.PY` passed: warning-/error-
+  free builds, 131,089-byte round trip, empty save, exact UI bytes
+  `FF 7A 20 21 3F 20 48`, absent original UI path, and no staging leftovers.
+  Reviewed updated input/test/docs and passed the authored-file whitespace check.
+- **Remaining:** None for this request. Existing DOSBox attribute-reporting
+  limitation remains; reduced-memory and launcher automation checks were not
+  rerun. No commit was requested.
+
+## 2026-11-14 — Package ASCII editing for commit and push
+
+- **Request:** Commit the implemented changes and push upstream.
+- **Changes:** Prepared one Conventional Commit for ASCII whole-byte editing in
+  HEX/BIN views, independent Tab layout switching and F7 focus toggling, modal
+  help updates, core/release/host regression coverage, README, pre-commit memory
+  instructions, current memory/history, and tracked rebuilt BUILD artifacts.
+  Reviewed and updated both memory files before committing. The target is
+  `master` -> `origin/master` in `ambrose40/BINED`. Separate local user edits to
+  `LAUNCH.BAT` were inspected and preserved outside this feature commit.
+- **Verification:** Reviewed worktree status, source/tests/docs/generated diffs,
+  recent history, remote URL and branch tracking. Reran `python TESTS\VERIFY.PY`
+  successfully: warning-free assembly logs, exact round-trip/empty/UI outputs,
+  and staging cleanup. Authored-file whitespace check passed. Full generated
+  listings/maps/logs retain the previously documented native DOS formatting.
+  DOS runtime tests were not repeated for this packaging-only task; the final
+  Tab/F7 changeset above records the passing core/release/90,000-event results.
+- **Remaining:** Commit/push completion is reported in the final response.
+  `LAUNCH.BAT` remains local user work; the known DOSBox attribute-reporting
+  limitation is unchanged.

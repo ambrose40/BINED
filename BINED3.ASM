@@ -21,9 +21,9 @@ DATA_ROWS       equ 20
 DATA_TOP        equ 2
 DATA_COLUMN     equ 10
 HELP_LEFT       equ 11
-HELP_TOP        equ 3
+HELP_TOP        equ 2
 HELP_WIDTH      equ 58
-HELP_HEIGHT     equ 19
+HELP_HEIGHT     equ 21
 ; VGA text attributes: background in the high nibble, foreground in the low.
 ; Black backgrounds; 01h blue, 02h dark green, 05h dark purple, 0Dh purple.
 ATTR_NORMAL     equ 0Ah           ; file digits, filename, help descriptions
@@ -36,7 +36,7 @@ ATTR_FOOTER     equ 07h           ; light-gray bottom line
 ATTR_HELP_KEY   equ 0Eh           ; bright-yellow key names in F1 help
 ATTR_HEADING    equ 0Fh           ; bright-white editor title
 ATTR_COLUMN     equ 0Ch           ; bright-red OFFSET / DATA / ASCII labels
-ATTR_MODE       equ 0Eh           ; bright-yellow active HEX / BIN mode
+ATTR_MODE       equ 0Eh           ; bright-yellow active HEX / BIN / ASCII mode
 ATTR_ASCII      equ 07h           ; light-gray ASCII preview
 
 _STACK segment para stack use16 'STACK'
@@ -51,7 +51,8 @@ bufferCapacity  dd 0
 fileSize        dd 0
 cursorOffset    dd 0               ; may equal fileSize: the append position
 viewOffset      dd 0               ; row-aligned logical offset
-editMode        db 0               ; 0 = hexadecimal, 1 = binary
+editMode        db 0               ; 0 = hexadecimal, 1 = binary, 2 = ASCII
+viewMode        db 0               ; numeric layout: 0 = hex, 1 = binary
 digitIndex      db 0               ; high nibble/most significant bit first
 digitsPerByte   db 2
 bytesPerRow     dd 16
@@ -91,30 +92,35 @@ binText         db 'BIN',0
 changedText     db ' *modified*',0
 columnText      db ' OFFSET   DATA',0
 asciiText       db 'ASCII',0
+asciiHexText    db 'ASCII (HEX)',0
+asciiBinText    db 'ASCII (BIN)',0
 offsetText      db 'Offset: ',0
 sizeText        db '  Size: ',0
 capacityText    db '  Capacity: ',0
 helpTitle       db ' F1 Help ',0
-helpText1       db 'Arrows: move between digits and rows.',0
+helpText1       db 'Arrows: move between digits, bits, bytes and rows.',0
 helpText2       db 'PgUp / PgDn: move one page up / down.',0
 helpText3       db 'Home / End: move to the row start / end.',0
 helpText4       db 'Ctrl-Home / Ctrl-End: move to file start / EOF.',0
 helpText5       db 'Ins / Del: insert 00 / delete the current byte.',0
 helpText6       db '0-9 / A-F (hex), 0 / 1 (binary): type to edit.',0
-helpText7       db 'At EOF, typing appends a byte.',0
-helpText8       db 'Space: move to the next byte.',0
-helpText9       db 'Backspace: move to the previous byte.',0
-helpText10      db 'F2: save the file.',0
-helpText11      db 'F4: save the file under a new name.',0
-helpText12      db 'F5: switch to binary mode.',0
-helpText13      db 'F6: switch to hexadecimal mode.',0
-helpText14      db 'Tab: toggle hexadecimal / binary mode.',0
-helpText15      db 'Esc: quit (prompts if changes are unsaved).',0
+helpText7       db 'ASCII: type printable text, including spaces.',0
+helpText8       db 'At EOF, typing appends a byte.',0
+helpText9       db 'Space: next byte in HEX/BIN; types a space in ASCII.',0
+helpText10      db 'Backspace: move to the previous byte.',0
+helpText11      db 'F2: save the file.',0
+helpText12      db 'F4: save the file under a new name.',0
+helpText13      db 'F5: switch to binary mode.',0
+helpText14      db 'F6: switch to hexadecimal mode.',0
+helpText15      db 'F7: toggle ASCII / numeric editing in this view.',0
+helpText16      db 'Tab: switch HEX / BIN view; keep editing focus.',0
+helpText17      db 'Esc: quit (prompts if changes are unsaved).',0
 helpLines       dw offset helpText1, offset helpText2, offset helpText3
                 dw offset helpText4, offset helpText5, offset helpText6
                 dw offset helpText7, offset helpText8, offset helpText9
                 dw offset helpText10, offset helpText11, offset helpText12
-                dw offset helpText13, offset helpText14, offset helpText15, 0
+                dw offset helpText13, offset helpText14, offset helpText15
+                dw offset helpText16, offset helpText17, 0
 helpReturn      db 'Any key: return to the editor.',0
 saveAsText      db 'Save as (Esc cancels, Enter accepts):',0
 quitText        db 'Unsaved changes: S = save and quit, D = discard, Esc = cancel',0
@@ -648,19 +654,29 @@ RenameFile endp
 ; switching modes never parse characters back out of the display.
 ; ---------------------------------------------------------------------------
 SetMode proc
-    ; AL = 0 (hex) or 1 (binary).
+    ; AL = 0 (hex), 1 (binary), or 2 (ASCII in the current numeric layout).
     mov editMode,al
     mov digitIndex,0
+    cmp al,2
+    je set_mode_layout
+    cmp al,viewMode
+    je set_mode_layout
+    mov viewMode,al
+    mov viewOffset,0
+set_mode_layout:
     mov digitsPerByte,2
     mov bytesPerRow,16
     mov pageBytes,DATA_ROWS * 16
-    or al,al
-    jz set_mode_done
+    cmp viewMode,1
+    jne set_mode_focus
     mov digitsPerByte,8
     mov bytesPerRow,6
     mov pageBytes,DATA_ROWS * 6
+set_mode_focus:
+    cmp editMode,2
+    jne set_mode_done
+    mov digitsPerByte,1
 set_mode_done:
-    mov viewOffset,0
     ret
 SetMode endp
 
@@ -724,6 +740,38 @@ edit_full:
     mov statusText,offset msgFull
     ret
 EditDigit endp
+
+; AL = printable 7-bit ASCII byte. Overwrite or append, then advance one byte.
+; Controls and extended characters are ignored; hex/binary can edit any byte.
+EditAscii proc
+    cmp al,20h
+    jb edit_ascii_done
+    cmp al,7Eh
+    ja edit_ascii_done
+    mov dl,al
+    mov eax,cursorOffset
+    cmp eax,fileSize
+    jb edit_ascii_existing
+    cmp eax,bufferCapacity
+    jae edit_ascii_full
+    inc fileSize
+    jmp edit_ascii_write
+edit_ascii_existing:
+    call ReadByte
+    cmp al,dl
+    je edit_ascii_advance
+    mov eax,cursorOffset
+edit_ascii_write:
+    call WriteByte
+    mov dirty,1
+edit_ascii_advance:
+    call MoveRight
+edit_ascii_done:
+    ret
+edit_ascii_full:
+    mov statusText,offset msgFull
+    ret
+EditAscii endp
 
 ; AL ASCII -> AL 0..15, CF on invalid input. Accept lowercase too.
 AsciiToHex proc
@@ -886,15 +934,20 @@ HandleKey proc
     je key_quit
     cmp al,9
     je key_toggle
-    cmp al,' '
-    je key_next_byte
     cmp al,8
     je key_previous_byte
     cmp al,0
     je key_extended
     cmp al,0E0h
     je key_extended
+    cmp editMode,2
+    je key_ascii_input
+    cmp al,' '
+    je key_next_byte
     call EditDigit
+    ret
+key_ascii_input:
+    call EditAscii
     ret
 key_extended:
     cmp ah,3Bh
@@ -907,6 +960,8 @@ key_extended:
     je key_binary
     cmp ah,40h
     je key_hex
+    cmp ah,41h
+    je key_ascii
     cmp ah,4Bh
     je key_left
     cmp ah,4Dh
@@ -1004,8 +1059,14 @@ key_previous_byte:
     call MoveBackward
     ret
 key_toggle:
-    mov al,editMode
+    mov al,viewMode
     xor al,1
+    cmp editMode,2
+    jne key_toggle_set
+    mov viewMode,al
+    mov viewOffset,0
+    mov al,2
+key_toggle_set:
     call SetMode
     ret
 key_binary:
@@ -1014,6 +1075,14 @@ key_binary:
     ret
 key_hex:
     xor al,al
+    call SetMode
+    ret
+key_ascii:
+    mov al,2
+    cmp editMode,2
+    jne key_ascii_set
+    mov al,viewMode
+key_ascii_set:
     call SetMode
     ret
 key_insert:
@@ -1162,6 +1231,14 @@ RenderScreen proc
     mov si,offset titleText
     call PutString
     mov si,offset hexText
+    cmp editMode,2
+    jne render_check_binary
+    mov si,offset asciiHexText
+    cmp viewMode,1
+    jne render_mode
+    mov si,offset asciiBinText
+    jmp render_mode
+render_check_binary:
     cmp editMode,0
     je render_mode
     mov si,offset binText
@@ -1179,8 +1256,8 @@ render_columns:
     mov si,offset columnText
     call PutString
     mov di,160 + 61 * 2
-    cmp editMode,0
-    je render_ascii_header
+    cmp viewMode,1
+    jne render_ascii_header
     mov di,160 + 66 * 2
 render_ascii_header:
     mov si,offset asciiText
@@ -1250,8 +1327,8 @@ render_byte_position:
     call RowAddress
     mov ax,renderColumn
     mov bx,3
-    cmp editMode,0
-    je render_byte_stride
+    cmp viewMode,1
+    jne render_byte_stride
     mov bx,9
 render_byte_stride:
     mul bx
@@ -1265,15 +1342,19 @@ render_byte_stride:
     mov renderAttr,ATTR_SELECTED
 render_byte_digits:
     xor ch,ch
-    mov cl,digitsPerByte
+    mov cl,2                      ; ASCII preserves the numeric view's digits
+    cmp viewMode,1
+    jne render_digit_count
+    mov cl,8
+render_digit_count:
     mov dh,renderValue
 render_digit:
     mov eax,renderOffset
     cmp eax,fileSize
     mov al,'-'
     je render_digit_output
-    cmp editMode,0
-    jne render_binary_digit
+    cmp viewMode,1
+    je render_binary_digit
     rol dh,4
     mov al,dh
     and al,0Fh
@@ -1287,21 +1368,28 @@ render_digit_output:
     mov ah,renderAttr
     stosw
     loop render_digit
-    ; ASCII preview: printable 7-bit characters only; EOF has no preview.
+    ; Printable preview / ASCII editing column. ASCII mode also marks EOF.
     mov eax,renderOffset
     cmp eax,fileSize
-    jae render_byte_done
+    jb render_ascii_cell
+    cmp editMode,2
+    jne render_byte_done
+render_ascii_cell:
     mov ax,renderRow
     add ax,DATA_TOP
     call RowAddress
     mov ax,renderColumn
     add ax,61
-    cmp editMode,0
-    je render_ascii_position
+    cmp viewMode,1
+    jne render_ascii_position
     add ax,5
 render_ascii_position:
     shl ax,1
     add di,ax
+    mov eax,renderOffset
+    cmp eax,fileSize
+    mov al,'-'
+    je render_ascii_output
     mov al,renderValue
     cmp al,32
     jb render_ascii_dot
@@ -1311,6 +1399,13 @@ render_ascii_dot:
     mov al,'.'
 render_ascii_output:
     mov ah,ATTR_ASCII
+    cmp editMode,2
+    jne render_ascii_store
+    mov edx,renderOffset
+    cmp edx,cursorOffset
+    jne render_ascii_store
+    mov ah,ATTR_SELECTED
+render_ascii_store:
     stosw
 render_byte_done:
     ret
@@ -1324,14 +1419,23 @@ PlaceCursor proc
     add al,DATA_TOP
     mov dh,al
     mov al,dl
+    cmp editMode,2
+    je cursor_ascii
     mov bl,3
-    cmp editMode,0
-    je cursor_stride
+    cmp editMode,1
+    jne cursor_stride
     mov bl,9
 cursor_stride:
     mul bl
     add al,DATA_COLUMN
     add al,digitIndex
+    jmp cursor_position
+cursor_ascii:
+    add al,61
+    cmp viewMode,1
+    jne cursor_position
+    add al,5
+cursor_position:
     mov dl,al
     xor bh,bh
     mov ah,02h

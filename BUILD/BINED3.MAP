@@ -1,9 +1,9 @@
 
  Start  Stop   Length Name               Class
 
- 00000H 00BCDH 00BCEH _TEXT              CODE
- 00BCEH 0140EH 00841H _DATA              DATA
- 01410H 0240FH 01000H _STACK             STACK
+ 00000H 00CBBH 00CBCH _TEXT              CODE
+ 00CBCH 015A5H 008EAH _DATA              DATA
+ 015B0H 025AFH 01000H _STACK             STACK
 
   Address         Publics by Name
 

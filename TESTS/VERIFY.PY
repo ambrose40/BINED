@@ -26,7 +26,7 @@ def main():
     actual = (data / "ROUND.BIN").read_bytes()
     assert actual == expected, "Multi-segment round trip changed file bytes"
     assert (data / "EMPTY.BIN").read_bytes() == b"", "Empty save is not empty"
-    assert (data / "UI2.BIN").read_bytes() == b"\xff\x44", "UI edits differ"
+    assert (data / "UI2.BIN").read_bytes() == b"\xffz !? H", "HEX/BIN/ASCII UI edits differ"
     assert not (data / "UI.BIN").exists(), "Save-as wrote the original path"
     assert {p.name.upper() for p in data.iterdir()} == {
         "ROUND.BIN", "EMPTY.BIN", "UI2.BIN"
