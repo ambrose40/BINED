@@ -8,6 +8,11 @@ testCapacity    dd 0
 testAttrSkipped db 0
 testPath        db 'BUILD\TESTDATA\ROUND.BIN',0
 emptyPath       db 'BUILD\TESTDATA\EMPTY.BIN',0
+textPath        db 'BUILD\TESTDATA\TEXT.BIN',0
+textFixture     db 'AB',13,10,'C',10,'DEF',13,'G'
+textFixtureEnd  label byte
+tabFixture      db 'A',9,'B',13,10,'0123456789',13,10,'x'
+tabFixtureEnd   label byte
 badPath         db 'BUILD\NO_SUCH\BAD.BIN',0
 directoryPath   db 'BUILD\TESTDATA',0
 tailBlank       db '   ',0
@@ -16,8 +21,8 @@ tailMultiple    db 'FIRST.BIN SECOND.BIN',0
 tailUnclosed    db '"FIRST.BIN',0
 tailHelp        db '/?  ',0
 binaryInput     db '10100101',0
-testPass        db 'PASS: command tail, memory boundaries, editing, navigation,',13,10
-                db '      10000 dispatches, rendering, DOS load/save and errors.',13,10,'$'
+testPass        db 'PASS: HEX/BIN/ASCII/Text, CR/LF/tab editing and navigation,',13,10
+                db '      stack balance, rendering, command tail and DOS load/save.',13,10,'$'
 testAttrNote    db 'NOTE: mounted DOS drive ignores read-only attributes;',13,10
                 db '      directory-target protection tested instead.',13,10,'$'
 testFail        db 'FAIL: $'
@@ -26,6 +31,15 @@ caseMemory      db 'DOS buffer allocation',13,10,'$'
 caseParse       db 'PSP command-tail parser',13,10,'$'
 caseEditing     db 'hex/binary overwrite and EOF append',13,10,'$'
 caseAscii       db 'ASCII input, mode cycling, navigation and EOF append',13,10,'$'
+caseText        db 'Text insertion, CR/LF, navigation, bounds and round trip',13,10,'$'
+caseTextFull    db 'Text full-buffer and atomic CR/LF insertion',13,10,'$'
+caseTextNav     db 'Text mixed-newline navigation',13,10,'$'
+caseTextBound   db 'Text CR/LF insertion/deletion across 64 KiB',13,10,'$'
+caseTextStack   db 'Text insert/newline/backspace stack balance',13,10,'$'
+caseTextVideo   db 'full-screen Text colours, wrapping, scrolling and values',13,10,'$'
+caseTextTyped   db 'Text selected/typed byte inspector and EOF',13,10,'$'
+caseTextWrap    db 'Text hard wrapping and screen bounds',13,10,'$'
+caseTextLines   db 'Text empty-line scrolling and empty document',13,10,'$'
 caseBoundary    db 'insert/delete across 64 KiB boundaries',13,10,'$'
 caseFull        db 'full-buffer and empty-file bounds',13,10,'$'
 caseNavigation  db 'navigation and viewport bounds',13,10,'$'
@@ -131,7 +145,7 @@ test_binary_complete:
     call HandleKey
     CHECKBYTE 0,0A5h
     mov testCase,offset caseAscii
-    mov ax,4100h                  ; F7 selects ASCII, preserving bytes/offset
+    mov ax,0009h                  ; Tab selects ASCII, preserving bytes/offset
     call HandleKey
     cmp editMode,2
     jne TestFailed
@@ -209,31 +223,15 @@ test_ascii_printable:
     call HandleKey
     CHECK32 cursorOffset,98
     mov dirty,0
-    mov al,9                      ; Tab preserves ASCII: HEX -> BIN -> HEX
-    call HandleKey
-    cmp editMode,2
-    jne TestFailed
-    cmp viewMode,1
-    jne TestFailed
-    cmp digitsPerByte,1
-    jne TestFailed
-    CHECK32 bytesPerRow,6
-    mov al,9
-    call HandleKey
-    cmp editMode,2
-    jne TestFailed
-    cmp viewMode,0
-    jne TestFailed
-    CHECK32 bytesPerRow,16
     mov viewOffset,16
-    mov ax,4100h                  ; F7 returns to numeric HEX in the same view
+    mov al,9                      ; Tab returns to numeric HEX in the same view
     call HandleKey
     cmp editMode,0
     jne TestFailed
     cmp digitsPerByte,2
     jne TestFailed
     CHECK32 viewOffset,16
-    mov al,9                      ; numeric Tab still switches HEX -> BIN -> HEX
+    mov ax,3F00h                  ; F5 selects binary numeric editing
     call HandleKey
     cmp editMode,1
     jne TestFailed
@@ -241,9 +239,20 @@ test_ascii_printable:
     jne TestFailed
     mov al,9
     call HandleKey
+    cmp editMode,2
+    jne TestFailed
+    cmp viewMode,1
+    jne TestFailed
+    CHECK32 bytesPerRow,6
+    mov al,9
+    call HandleKey
+    cmp editMode,1
+    jne TestFailed
+    mov ax,4000h                  ; F6 selects HEX
+    call HandleKey
     cmp editMode,0
     jne TestFailed
-    mov ax,4100h
+    mov al,9
     call HandleKey
     cmp editMode,2
     jne TestFailed
@@ -282,11 +291,11 @@ test_ascii_printable:
     call HandleKey
     CHECK32 fileSize,1
     CHECKBYTE 0,'Q'
-    mov ax,3F00h                  ; BIN -> F7 keeps six-byte binary layout
+    mov ax,3F00h                  ; BIN -> Tab keeps six-byte binary layout
     call HandleKey
     mov digitIndex,7
     mov viewOffset,6
-    mov ax,4100h
+    mov al,9
     call HandleKey
     cmp editMode,2
     jne TestFailed
@@ -298,8 +307,8 @@ test_ascii_printable:
     jne TestFailed
     CHECK32 bytesPerRow,6
     CHECK32 pageBytes,120
-    CHECK32 viewOffset,6           ; F7 preserves current viewport
-    mov ax,4100h                  ; F7 toggles back to binary bits, not HEX
+    CHECK32 viewOffset,6           ; Tab preserves current viewport
+    mov al,9                      ; Tab toggles back to binary bits, not HEX
     call HandleKey
     cmp editMode,1
     jne TestFailed
@@ -308,7 +317,7 @@ test_ascii_printable:
     cmp digitsPerByte,8
     jne TestFailed
     CHECK32 viewOffset,6
-    mov ax,4100h
+    mov al,9
     call HandleKey
     mov cursorOffset,0
     mov al,'z'
@@ -343,13 +352,13 @@ test_ascii_printable:
     call HandleKey
     CHECK32 cursorOffset,40
     mov dirty,0
-    mov al,9                      ; ASCII (BIN) -> ASCII (HEX)
+    mov al,9                      ; ASCII (BIN) -> BIN numeric
     call HandleKey
-    cmp editMode,2
+    cmp editMode,1
     jne TestFailed
-    cmp viewMode,0
+    cmp viewMode,1
     jne TestFailed
-    cmp digitsPerByte,1
+    cmp digitsPerByte,8
     jne TestFailed
     cmp dirty,0
     jne TestFailed
@@ -357,6 +366,241 @@ test_ascii_printable:
     CHECKBYTE 0,'z'
     CHECKBYTE 1,20h
     CHECKBYTE 2,'!'
+    mov ax,4000h
+    call HandleKey
+
+    mov testCase,offset caseText
+    mov fileSize,0
+    mov cursorOffset,0
+    mov al,3
+    call SetMode
+    mov ax,4100h                  ; F7 selects full-screen Text
+    call HandleKey
+    cmp editMode,3
+    jne TestFailed
+    cmp viewMode,2
+    jne TestFailed
+    mov al,'A'
+    call HandleKey
+    mov al,'B'
+    call HandleKey
+    mov ax,4B00h
+    call HandleKey
+    mov al,13
+    call HandleKey
+    CHECK32 fileSize,4
+    CHECK32 cursorOffset,3
+    CHECKBYTE 0,'A'
+    CHECKBYTE 1,13
+    CHECKBYTE 2,10
+    CHECKBYTE 3,'B'
+    mov ax,4B00h                  ; CR/LF is one navigation step
+    call HandleKey
+    CHECK32 cursorOffset,1
+    mov ax,4D00h
+    call HandleKey
+    CHECK32 cursorOffset,3
+    mov al,8                      ; Backspace joins the two lines
+    call HandleKey
+    CHECK32 fileSize,2
+    CHECK32 cursorOffset,1
+    CHECKBYTE 0,'A'
+    CHECKBYTE 1,'B'
+    mov al,13
+    call HandleKey
+    mov ax,4B00h
+    call HandleKey
+    mov ax,5300h                  ; Delete joins lines at CR/LF too
+    call HandleKey
+    CHECK32 fileSize,2
+    CHECKBYTE 1,'B'
+    mov al,13
+    call HandleKey
+    mov dx,offset textPath
+    call SaveDocument
+    jc TestFailed
+    mov si,offset textPath
+    mov di,offset fileName
+    call TestCopyString
+    mov fileSize,0
+    call LoadFile
+    jc TestFailed
+    CHECK32 fileSize,4
+    CHECKBYTE 0,'A'
+    CHECKBYTE 1,13
+    CHECKBYTE 2,10
+    CHECKBYTE 3,'B'
+    mov eax,bufferCapacity
+    mov testCase,offset caseTextFull
+    mov testCapacity,eax
+    mov bufferCapacity,5           ; only one spare byte: Enter must be atomic
+    mov cursorOffset,1
+    mov dirty,0
+    mov al,13
+    call HandleKey
+    CHECK32 fileSize,4
+    CHECK32 cursorOffset,1
+    cmp dirty,0
+    jne TestFailed
+    CHECKBYTE 1,13
+    CHECKBYTE 3,'B'
+    mov al,'X'
+    call HandleKey
+    CHECK32 fileSize,5
+    CHECKBYTE 1,'X'
+    mov dirty,0
+    mov al,'Y'
+    call HandleKey
+    mov al,9
+    call HandleKey
+    mov al,13
+    call HandleKey
+    CHECK32 fileSize,5
+    CHECK32 cursorOffset,2
+    cmp dirty,0
+    jne TestFailed
+    mov eax,testCapacity
+    mov bufferCapacity,eax
+
+    mov fileSize,0
+    mov cursorOffset,0
+    mov al,'A'
+    call HandleKey
+    mov al,9                      ; Text Tab inserts one 09 byte, not spaces
+    call HandleKey
+    mov al,'B'
+    call HandleKey
+    CHECK32 fileSize,3
+    CHECKBYTE 0,'A'
+    CHECKBYTE 1,9
+    CHECKBYTE 2,'B'
+    cmp viewMode,2
+    jne TestFailed
+    mov fileSize,tabFixtureEnd-tabFixture
+    mov si,offset tabFixture
+    xor edi,edi
+test_tab_fixture:
+    lodsb
+    mov dl,al
+    mov eax,edi
+    call WriteByte
+    inc edi
+    cmp edi,fileSize
+    jb test_tab_fixture
+    mov cursorOffset,2             ; B is at screen column 8
+    call EnsureVisible
+    cmp textCursorCol,8
+    jne TestFailed
+    mov ax,5000h
+    call HandleKey
+    CHECK32 cursorOffset,13        ; same display column in an ordinary row
+    mov ax,4800h
+    call HandleKey
+    CHECK32 cursorOffset,2
+    mov ax,4B00h
+    call HandleKey
+    CHECK32 cursorOffset,1         ; one cursor position per tab byte
+    call EnsureVisible
+    cmp textCursorCol,1
+    jne TestFailed
+
+    mov testCase,offset caseTextNav
+    mov fileSize,textFixtureEnd-textFixture
+    xor edi,edi
+    mov si,offset textFixture
+test_text_fixture:
+    lodsb
+    mov dl,al
+    mov eax,edi
+    call WriteByte
+    inc edi
+    cmp edi,fileSize
+    jb test_text_fixture
+    mov dirty,0
+    mov cursorOffset,7
+    mov ax,4700h
+    call HandleKey
+    CHECK32 cursorOffset,6
+    mov ax,4F00h
+    call HandleKey
+    CHECK32 cursorOffset,9
+    mov ax,4800h
+    call HandleKey
+    CHECK32 cursorOffset,5          ; shorter LF row clamps the column
+    mov cursorOffset,8
+    mov ax,5000h
+    call HandleKey
+    CHECK32 cursorOffset,11
+    mov ax,4800h
+    call HandleKey
+    CHECK32 cursorOffset,7
+    mov cursorOffset,3             ; entering Text on LF normalizes to CR
+    call EnsureVisible
+    CHECK32 cursorOffset,2
+    cmp textCursorCol,2
+    jne TestFailed
+    mov ax,7500h
+    call HandleKey
+    mov ax,4900h
+    call HandleKey
+    CHECK32 cursorOffset,1
+    mov ax,5100h
+    call HandleKey
+    CHECK32 cursorOffset,11
+    cmp dirty,0
+    jne TestFailed
+    mov testCase,offset caseTextBound
+    mov fileSize,10001h
+    call TestFillPattern
+    mov cursorOffset,0FFFFh
+    mov al,13
+    call HandleKey
+    CHECK32 fileSize,10003h
+    CHECKBYTE 0FFFFh,13
+    CHECKBYTE 10000h,10
+    CHECKBYTE 10001h,5Ah
+    call EnsureVisible
+    CHECK32 cursorOffset,10001h
+    cmp textCursorRow,DATA_ROWS
+    jae TestFailed
+    cmp textCursorCol,80
+    jae TestFailed
+    mov al,8
+    call HandleKey
+    CHECK32 fileSize,10001h
+    CHECK32 cursorOffset,0FFFFh
+    call TestVerifyPattern
+    jc TestFailed
+    mov fileSize,0
+    mov testCase,offset caseTextStack
+    mov cursorOffset,0
+    mov testStack,sp
+    mov testLoops,1000
+test_text_dispatch:
+    mov al,'Q'
+    call HandleKey
+    mov al,13
+    call HandleKey
+    mov al,8
+    call HandleKey
+    mov al,8
+    call HandleKey
+    call EnsureVisible
+    cmp sp,testStack
+    jne TestFailed
+    CHECK32 fileSize,0
+    dec testLoops
+    jnz test_text_dispatch
+    mov al,8                      ; empty Text deletion and ignored controls
+    call HandleKey
+    mov ax,5300h
+    call HandleKey
+    mov ax,0001h
+    call HandleKey
+    mov ax,00FFh
+    call HandleKey
+    CHECK32 fileSize,0
+    CHECK32 cursorOffset,0
     mov ax,4000h
     call HandleKey
     mov testCase,offset caseBoundary
@@ -389,7 +633,7 @@ test_ascii_printable:
     call EditDigit
     mov eax,bufferCapacity
     CHECK32 fileSize,eax
-    mov ax,4100h
+    mov al,9
     call HandleKey
     mov dirty,0
     mov al,'X'
@@ -485,7 +729,7 @@ test_dispatch_loop:
     call HandleKey
     mov ax,4D00h
     call HandleKey
-    mov ax,4100h
+    mov al,9
     call HandleKey
     mov ax,4B00h
     call HandleKey
@@ -707,6 +951,188 @@ test_dispatch_loop:
     CHECK32 fileSize,1
     CHECK32 cursorOffset,1
     CHECKBYTE 0,0A5h
+
+    mov testCase,offset caseTextVideo
+    mov fileSize,4
+    xor eax,eax
+    mov dl,'A'
+    call WriteByte
+    mov eax,1
+    mov dl,13
+    call WriteByte
+    mov eax,2
+    mov dl,10
+    call WriteByte
+    mov eax,3
+    mov dl,'B'
+    call WriteByte
+    mov cursorOffset,3
+    mov al,3
+    call SetMode
+    call EnsureVisible
+    call RenderScreen
+    cmp word ptr es:[(hexText-titleText-1)*2],0E54h ; yellow Text title
+    jne TestFailed
+    cmp word ptr es:[2*160],0A41h ; bright-green A at left edge, no offset gutter
+    jne TestFailed
+    cmp word ptr es:[3*160],0D42h ; selected B in purple after CR/LF
+    jne TestFailed
+    cmp word ptr es:[24*160+58*2],0A48h ; HEX: label, bottom-right
+    jne TestFailed
+    cmp word ptr es:[24*160+63*2],0534h ; HEX: 42
+    jne TestFailed
+    cmp word ptr es:[24*160+64*2],0532h
+    jne TestFailed
+    cmp word ptr es:[24*160+67*2],0A42h ; BIN: label
+    jne TestFailed
+    cmp word ptr es:[24*160+73*2],0531h ; 01000010
+    jne TestFailed
+    cmp word ptr es:[24*160+78*2],0531h
+    jne TestFailed
+    mov ah,03h
+    xor bh,bh
+    int 10h
+    cmp dx,0300h
+    jne TestFailed
+    mov testCase,offset caseTextTyped
+    mov cursorOffset,1
+    call EnsureVisible
+    call RenderScreen
+    cmp word ptr es:[2*160+1*2],0D20h ; selected CR is a purple blank
+    jne TestFailed
+    cmp word ptr es:[24*160+64*2],0544h ; actual selected byte 0D
+    jne TestFailed
+    mov ax,7500h
+    call HandleKey
+    mov al,'Z'
+    call HandleKey
+    call EnsureVisible
+    call RenderScreen
+    cmp word ptr es:[24*160+63*2],0535h ; typed Z at EOF: 5A, not dashes
+    jne TestFailed
+    cmp word ptr es:[24*160+64*2],0541h
+    jne TestFailed
+    cmp word ptr es:[3*160+2*2],0D2Dh ; EOF after BZ
+    jne TestFailed
+    mov ax,4B00h
+    call HandleKey
+    call EnsureVisible
+    call RenderScreen
+    cmp word ptr es:[3*160+1*2],0D5Ah ; current editable Z in purple
+    jne TestFailed
+    mov ax,7500h
+    call HandleKey
+    call EnsureVisible
+    call RenderScreen
+    cmp word ptr es:[24*160+63*2],052Dh ; no selected/typed byte after navigation
+    jne TestFailed
+    mov fileSize,3
+    mov viewOffset,0
+    xor eax,eax
+    mov dl,'A'
+    call WriteByte
+    mov eax,1
+    mov dl,9
+    call WriteByte
+    mov eax,2
+    mov dl,'B'
+    call WriteByte
+    mov cursorOffset,1
+    call EnsureVisible
+    call RenderScreen
+    cmp word ptr es:[2*160+1*2],0D20h ; selected tab: purple first expansion cell
+    jne TestFailed
+    cmp word ptr es:[2*160+7*2],0A20h ; remainder of expansion stays green
+    jne TestFailed
+    cmp word ptr es:[2*160+8*2],0A42h ; next char at the 8-column tab stop
+    jne TestFailed
+    cmp word ptr es:[24*160+64*2],0539h ; HEX: 09 for actual tab byte
+    jne TestFailed
+    mov ax,4D00h
+    call HandleKey
+    call EnsureVisible
+    call RenderScreen
+    cmp word ptr es:[2*160+8*2],0D42h ; Right skips whole tab expansion
+    jne TestFailed
+    mov ah,03h
+    xor bh,bh
+    int 10h
+    cmp dx,0208h
+    jne TestFailed
+    mov cursorOffset,0
+    xor eax,eax
+    mov dl,0FFh
+    call WriteByte
+    call EnsureVisible
+    call RenderScreen
+    cmp word ptr es:[2*160],0D2Eh ; non-ASCII file bytes remain editable as dots
+    jne TestFailed
+    cmp word ptr es:[24*160+63*2],0546h ; HEX: FF
+    jne TestFailed
+    mov testCase,offset caseTextWrap
+    mov fileSize,1600
+    xor esi,esi
+test_text_wrap_fill:
+    mov eax,esi
+    mov dl,'x'
+    call WriteByte
+    inc esi
+    cmp esi,fileSize
+    jb test_text_wrap_fill
+    mov cursorOffset,1600
+    call EnsureVisible
+    CHECK32 viewOffset,80
+    call RenderScreen
+    cmp word ptr es:[2*160],0A78h ; wrapped text uses green over black
+    jne TestFailed
+    cmp word ptr es:[21*160],0D2Dh ; EOF after a full screen wraps and scrolls
+    jne TestFailed
+    cmp word ptr es:[4000],0A55Ah
+    jne TestFailed
+    mov ah,03h
+    xor bh,bh
+    int 10h
+    cmp dx,1500h
+    jne TestFailed
+    mov cursorOffset,0
+    mov ax,4F00h
+    call HandleKey
+    CHECK32 cursorOffset,79
+    mov ax,5000h
+    call HandleKey
+    CHECK32 cursorOffset,159
+    mov ax,4700h
+    call HandleKey
+    CHECK32 cursorOffset,80
+    mov testCase,offset caseTextLines
+    mov fileSize,44                ; 22 empty CR/LF lines also scroll by rows
+    mov viewOffset,0
+    xor esi,esi
+test_text_empty_lines:
+    mov eax,esi
+    mov dl,13
+    call WriteByte
+    inc esi
+    mov eax,esi
+    mov dl,10
+    call WriteByte
+    inc esi
+    cmp esi,fileSize
+    jb test_text_empty_lines
+    mov cursorOffset,44
+    call EnsureVisible
+    CHECK32 viewOffset,6
+    call RenderScreen
+    cmp word ptr es:[21*160],0D2Dh
+    jne TestFailed
+    mov fileSize,0
+    mov cursorOffset,0
+    call EnsureVisible
+    call RenderScreen
+    cmp word ptr es:[2*160],0D2Dh ; empty Text buffer still has an editing cursor
+    jne TestFailed
+    cmp word ptr es:[4000],0A55Ah
+    jne TestFailed
     call EndVideo
     mov videoActive,0
 

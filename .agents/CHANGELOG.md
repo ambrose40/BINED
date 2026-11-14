@@ -320,3 +320,62 @@ introduced on 2026-10-23.
   above and are not current launcher runtime verification.
 - **Remaining:** No runtime issue identified in the reviewed display-only diff.
   This request authorizes a local commit; pushing was not requested.
+
+## 2026-11-14 — Full-screen Text editing with CR/LF, tabs and byte inspector
+
+- **Request:** Add full-screen ASCII/Text editing with carriage returns, matching
+  green/purple data/selection colours, bottom-right HEX:/BIN: values, help and
+  tests. During implementation the user clarified the final controls: F5 BIN,
+  F6 HEX, F7 Text; Tab toggles numeric/right-column ASCII in HEX/BIN and inserts
+  a tabulation character in Text. This supersedes the initial Tab-view-cycle
+  proposal and the previous F7 ASCII-focus binding.
+- **Changes:** Extended `BINED3.ASM` with Text view/edit state, an 80-column by
+  20-row editing area, green characters/purple current byte, insertion typing,
+  atomic DOS CR/LF insertion, actual `09h` tabs with 8-column stops, CR/LF-aware
+  Left/Right and Backspace/Delete, display-row Home/End/Up/Down/page navigation,
+  wrapping/scrolling, and preserved raw file bytes. Shared bounded row/column
+  mapping keeps display and navigation consistent; EOF/line-break/tab cursor
+  positions stay within the text screen. Added the bottom-right byte inspector
+  for selected bytes or the latest typed byte at EOF, with dashes otherwise.
+  Updated F1 help and README, expanded `TESTS/CORE.INC` and release key driver,
+  updated `TESTS/VERIFY.PY`, generated `BUILD/TESTDATA/TEXT.BIN`, and rebuilt
+  tracked editor/test artifacts. Updated memory for final controls and recorded
+  the already-completed local launcher commit `31cf0c4`.
+- **Verification:** Ran the waited DOSBox production build and `TESTS\TEST.BAT`.
+  Core and release integration passed with error-/warning-free TASM builds.
+  New checks cover insert/overwrite distinctions, CR/LF/tab exact bytes,
+  CR/LF-pair deletion, atomic Enter with one free byte, full/empty/ignored-input
+  bounds, mixed newline styles, 8-column tab navigation/expansion, cross-64-KiB
+  Text insertion/deletion and cursor bounds, wrapping/EOF/empty-line scrolling,
+  green/purple text/tab selection, selected/typed HEX/BIN values, and 1,000 Text
+  stress cycles (4,000 events) with unchanged SP. Existing 90,000-event dispatch
+  and I/O checks also passed. Regression runs exposed a short-final-row EOF
+  mapping bug, which was fixed, and a fixture viewport setup issue, which was
+  corrected before the successful final run. Python independently verified the
+  131,089-byte pattern round trip, empty save, `TEXT.BIN` = `b"A\r\nB"`,
+  `UI2.BIN` = `b"\xffz !? H\r\nText\r\n\tOK"`, absent original UI path,
+  clean staging directory, and warning-free logs. Authored-file diff check passed.
+- **Remaining:** None for this request. Existing DOSBox attribute-reporting
+  limitation remains. Reduced-memory and launcher automation checks were not
+  rerun for this changeset. No commit or push was requested.
+
+## 2026-11-14 — Package full-screen Text editing for commit and push
+
+- **Request:** Commit the implemented Text-mode changes and push upstream.
+- **Changes:** Prepared `feat(editor): add full-screen text editing and byte
+  inspector` with the complete Text insertion/navigation/rendering feature,
+  CR/LF/tab behavior, corrected F5/F6/F7/Tab controls, updated F1 help/README,
+  core/release/host tests, tracked rebuilt BUILD artifacts, and the new
+  `BUILD/TESTDATA/TEXT.BIN` regression fixture. Reviewed and updated both project
+  memory files before committing. Packaging starts at `31cf0c4` on `master`,
+  tracking `origin/master` in `ambrose40/BINED`.
+- **Verification:** Reviewed status, source/test/docs/log/map diffs, relevant
+  listing entries, recent history, and branch/remote tracking. Reran
+  `python TESTS\VERIFY.PY`: exact 131,089-byte pattern round trip, empty save,
+  CR/LF Text output, CR/LF/tab integration output, staging cleanup and warning-
+  free build logs all passed. Authored-file whitespace check passed. Native
+  DOS-generated whitespace in listings/maps/logs is preserved as documented.
+  DOS runtime tests were not repeated for this commit-only packaging step;
+  passing core/release and 94,000-event stress results are recorded above.
+- **Remaining:** Commit/push completion is reported in the final response.
+  Existing DOSBox attribute-reporting limitation remains unchanged.

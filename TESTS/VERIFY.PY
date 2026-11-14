@@ -26,13 +26,14 @@ def main():
     actual = (data / "ROUND.BIN").read_bytes()
     assert actual == expected, "Multi-segment round trip changed file bytes"
     assert (data / "EMPTY.BIN").read_bytes() == b"", "Empty save is not empty"
-    assert (data / "UI2.BIN").read_bytes() == b"\xffz !? H", "HEX/BIN/ASCII UI edits differ"
+    assert (data / "TEXT.BIN").read_bytes() == b"A\r\nB", "Text CR/LF round trip differs"
+    assert (data / "UI2.BIN").read_bytes() == b"\xffz !? H\r\nText\r\n\tOK", "UI/Text edits differ"
     assert not (data / "UI.BIN").exists(), "Save-as wrote the original path"
     assert {p.name.upper() for p in data.iterdir()} == {
-        "ROUND.BIN", "EMPTY.BIN", "UI2.BIN"
+        "ROUND.BIN", "EMPTY.BIN", "TEXT.BIN", "UI2.BIN"
     }, "Unexpected leftover staging/backup files"
     assert (build / "BINED3.EXE").read_bytes()[:2] == b"MZ", "Not a DOS EXE"
-    print(f"PASS: {len(actual):,}-byte round trip, empty save, exact UI output,")
+    print(f"PASS: {len(actual):,}-byte round trip, empty save, CR/LF text and UI output,")
     print("      clean staging directory, and warning-free TASM builds.")
     print(f"ROUND.BIN SHA-256: {hashlib.sha256(actual).hexdigest()}")
 

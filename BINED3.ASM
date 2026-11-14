@@ -26,7 +26,7 @@ HELP_WIDTH      equ 58
 HELP_HEIGHT     equ 21
 ; VGA text attributes: background in the high nibble, foreground in the low.
 ; Black backgrounds; 01h blue, 02h dark green, 05h dark purple, 0Dh purple.
-ATTR_NORMAL     equ 0Ah           ; file digits, filename, help descriptions
+ATTR_NORMAL     equ 0Ah           ; numeric data / full-screen Text characters
 ATTR_TITLE      equ 02h           ; dark-green dialog text
 ATTR_OFFSET     equ 02h           ; dark-green row offsets
 ATTR_SELECTED   equ 0Dh           ; purple selected byte / EOF marker
@@ -36,7 +36,7 @@ ATTR_FOOTER     equ 07h           ; light-gray bottom line
 ATTR_HELP_KEY   equ 0Eh           ; bright-yellow key names in F1 help
 ATTR_HEADING    equ 0Fh           ; bright-white editor title
 ATTR_COLUMN     equ 0Ch           ; bright-red OFFSET / DATA / ASCII labels
-ATTR_MODE       equ 0Eh           ; bright-yellow active HEX / BIN / ASCII mode
+ATTR_MODE       equ 0Eh           ; bright-yellow HEX / BIN / ASCII / Text mode
 ATTR_ASCII      equ 07h           ; light-gray ASCII preview
 
 _STACK segment para stack use16 'STACK'
@@ -51,8 +51,8 @@ bufferCapacity  dd 0
 fileSize        dd 0
 cursorOffset    dd 0               ; may equal fileSize: the append position
 viewOffset      dd 0               ; row-aligned logical offset
-editMode        db 0               ; 0 = hexadecimal, 1 = binary, 2 = ASCII
-viewMode        db 0               ; numeric layout: 0 = hex, 1 = binary
+editMode        db 0               ; 0 = hex, 1 = binary, 2 = ASCII, 3 = Text
+viewMode        db 0               ; layout: 0 = hex, 1 = binary, 2 = full Text
 digitIndex      db 0               ; high nibble/most significant bit first
 digitsPerByte   db 2
 bytesPerRow     dd 16
@@ -85,6 +85,13 @@ renderColumn    dw 0
 renderValue     db 0
 renderAttr      db 0
 dialogLength    dw 0
+textCursorRow   dw 0
+textCursorCol   dw 0
+textRowEnd      dd 0
+textRowNext     dd 0
+textMoveRows    dd 0
+textLastByte    db 0
+textLastValid   db 0
 hexDigits       db '0123456789ABCDEF'
 titleText       db ' EZ Binary Editor 3 | 486 real mode | ',0
 hexText         db 'HEX',0
@@ -94,6 +101,10 @@ columnText      db ' OFFSET   DATA',0
 asciiText       db 'ASCII',0
 asciiHexText    db 'ASCII (HEX)',0
 asciiBinText    db 'ASCII (BIN)',0
+textModeText    db 'Text',0
+textColumnText  db ' TEXT: insert characters | Enter: CR/LF | Backspace/Del: delete',0
+byteHexText     db 'HEX: ',0
+byteBinText     db '  BIN: ',0
 offsetText      db 'Offset: ',0
 sizeText        db '  Size: ',0
 capacityText    db '  Capacity: ',0
@@ -104,16 +115,16 @@ helpText3       db 'Home / End: move to the row start / end.',0
 helpText4       db 'Ctrl-Home / Ctrl-End: move to file start / EOF.',0
 helpText5       db 'Ins / Del: insert 00 / delete the current byte.',0
 helpText6       db '0-9 / A-F (hex), 0 / 1 (binary): type to edit.',0
-helpText7       db 'ASCII: type printable text, including spaces.',0
+helpText7       db 'ASCII / Text: overwrite / insert printable text.',0
 helpText8       db 'At EOF, typing appends a byte.',0
-helpText9       db 'Space: next byte in HEX/BIN; types a space in ASCII.',0
-helpText10      db 'Backspace: move to the previous byte.',0
+helpText9       db 'Space: next byte in numeric; text in ASCII/Text.',0
+helpText10      db 'Backspace: previous byte; deletes in Text.',0
 helpText11      db 'F2: save the file.',0
 helpText12      db 'F4: save the file under a new name.',0
-helpText13      db 'F5: switch to binary mode.',0
-helpText14      db 'F6: switch to hexadecimal mode.',0
-helpText15      db 'F7: toggle ASCII / numeric editing in this view.',0
-helpText16      db 'Tab: switch HEX / BIN view; keep editing focus.',0
+helpText13      db 'F5 / F6: switch to binary / hex digit editing.',0
+helpText14      db 'Enter (Text): insert a DOS CR/LF line break.',0
+helpText15      db 'F7: full-screen Text editing (Enter inserts CR/LF).',0
+helpText16      db 'Tab: ASCII/numeric in HEX/BIN; tab byte in Text.',0
 helpText17      db 'Esc: quit (prompts if changes are unsaved).',0
 helpLines       dw offset helpText1, offset helpText2, offset helpText3
                 dw offset helpText4, offset helpText5, offset helpText6
@@ -654,9 +665,19 @@ RenameFile endp
 ; switching modes never parse characters back out of the display.
 ; ---------------------------------------------------------------------------
 SetMode proc
-    ; AL = 0 (hex), 1 (binary), or 2 (ASCII in the current numeric layout).
+    ; AL = 0 (hex), 1 (binary), 2 (ASCII in numeric view), or 3 (Text).
     mov editMode,al
     mov digitIndex,0
+    mov textLastValid,0
+    cmp al,3
+    jne set_mode_numeric
+    mov viewMode,2
+    mov viewOffset,0
+    mov digitsPerByte,1
+    mov bytesPerRow,80
+    mov pageBytes,DATA_ROWS * 80
+    ret
+set_mode_numeric:
     cmp al,2
     je set_mode_layout
     cmp al,viewMode
@@ -845,6 +866,363 @@ delete_done:
     ret
 DeleteByte endp
 
+; Text rows wrap at 80 cells; CR/LF, bare CR and bare LF end a row.
+; EAX row start -> EDX content end, EAX next row start (equal at hard wrap/EOF).
+; Preserves EBX/ECX/ESI; all reads are bounded by fileSize.
+NextTextRow proc
+    push ebx
+    push ecx
+    push esi
+    mov esi,eax
+    xor ecx,ecx
+text_row_scan:
+    cmp esi,fileSize
+    jae text_row_end
+    mov eax,esi
+    call ReadByte
+    cmp al,13
+    je text_row_break
+    cmp al,10
+    je text_row_break
+    cmp al,9
+    jne text_row_character
+    or ecx,7
+text_row_character:
+    inc ecx
+    inc esi
+    cmp ecx,80
+    jb text_row_scan
+text_row_end:
+    mov edx,esi
+    mov eax,esi
+    jmp text_row_return
+text_row_break:
+    mov edx,esi
+    inc esi
+    cmp al,13
+    jne text_row_next
+    cmp esi,fileSize
+    jae text_row_next
+    mov eax,esi
+    call ReadByte
+    cmp al,10
+    jne text_row_next
+    inc esi
+text_row_next:
+    mov eax,esi
+text_row_return:
+    pop esi
+    pop ecx
+    pop ebx
+    ret
+NextTextRow endp
+
+; EAX offset -> EAX display-row start, EBX row number, ECX column, EDX row end.
+; CR/LF's two offsets share one cursor cell. EOF after a wrap starts a new row.
+FindTextRow proc
+    push esi
+    push edi
+    mov edi,eax
+    cmp edi,fileSize
+    jbe text_find_start
+    mov edi,fileSize
+text_find_start:
+    xor esi,esi
+    xor ebx,ebx
+text_find_next:
+    mov eax,esi
+    call NextTextRow
+    cmp eax,esi
+    je text_find_done
+    cmp edi,eax
+    jb text_find_done
+    cmp eax,fileSize
+    jne text_find_advance
+    cmp eax,edx
+    jne text_find_advance
+    push eax
+    push edx
+    mov edx,eax
+    mov eax,esi
+    call TextColumn
+    pop edx
+    pop eax
+    cmp ecx,80
+    jb text_find_done              ; EOF after a short row stays on that row
+text_find_advance:
+    mov esi,eax
+    inc ebx
+    jmp text_find_next
+text_find_done:
+    cmp edi,edx
+    jbe text_find_column
+    mov edi,edx
+text_find_column:
+    push edx
+    mov edx,edi
+    mov eax,esi
+    call TextColumn
+    pop edx
+    mov eax,esi
+    pop edi
+    pop esi
+    ret
+FindTextRow endp
+
+; EAX row start, EDX byte position -> ECX display column (8-column tab stops).
+; Preserves EDX/EBX/ESI. Target must be in this row's content.
+TextColumn proc
+    push ebx
+    push esi
+    mov esi,eax
+    xor ecx,ecx
+text_column_next:
+    cmp esi,edx
+    jae text_column_done
+    mov eax,esi
+    call ReadByte
+    cmp al,9
+    jne text_column_character
+    or ecx,7
+text_column_character:
+    inc ecx
+    inc esi
+    jmp text_column_next
+text_column_done:
+    pop esi
+    pop ebx
+    ret
+TextColumn endp
+
+; EAX row start, EDX row end, ECX desired column -> EAX byte at/before column.
+; A tab is one editable byte, with no cursor positions inside its expansion.
+TextOffsetAtColumn proc
+    push ebx
+    push esi
+    mov esi,eax
+    xor ebx,ebx
+text_offset_next:
+    cmp esi,edx
+    jae text_offset_done
+    mov eax,esi
+    call ReadByte
+    cmp al,9
+    jne text_offset_character
+    or ebx,7
+text_offset_character:
+    inc ebx
+    cmp ebx,ecx
+    ja text_offset_done
+    inc esi
+    jmp text_offset_next
+text_offset_done:
+    mov eax,esi
+    pop esi
+    pop ebx
+    ret
+TextOffsetAtColumn endp
+
+; EBX display-row number -> EAX row start, saturating at EOF.
+TextLineOffset proc
+    push ecx
+    push edx
+    mov ecx,ebx
+    xor eax,eax
+text_line_next:
+    jecxz text_line_done
+    cmp eax,fileSize
+    jae text_line_done
+    call NextTextRow
+    dec ecx
+    jmp text_line_next
+text_line_done:
+    pop edx
+    pop ecx
+    ret
+TextLineOffset endp
+
+EnsureTextVisible proc
+    ; A mode change may land on the LF half of CR/LF. Use the CR cursor cell.
+    mov esi,cursorOffset
+    test esi,esi
+    jz text_visible_find
+    cmp esi,fileSize
+    jae text_visible_find
+    mov eax,esi
+    call ReadByte
+    cmp al,10
+    jne text_visible_find
+    lea eax,[esi-1]
+    call ReadByte
+    cmp al,13
+    jne text_visible_find
+    dec cursorOffset
+text_visible_find:
+    mov eax,cursorOffset
+    call FindTextRow
+    mov ebp,ebx
+    mov textCursorCol,cx
+    mov eax,viewOffset
+    call FindTextRow
+    mov viewOffset,eax
+    cmp ebp,ebx
+    jb text_visible_above
+    lea eax,[ebx+DATA_ROWS]
+    cmp ebp,eax
+    jb text_visible_position
+    mov ebx,ebp
+    sub ebx,DATA_ROWS-1
+    jmp text_visible_scroll
+text_visible_above:
+    mov ebx,ebp
+text_visible_scroll:
+    call TextLineOffset
+    mov viewOffset,eax
+text_visible_position:
+    sub ebp,ebx
+    mov textCursorRow,bp
+    ret
+EnsureTextVisible endp
+
+TextLeft proc
+    mov esi,cursorOffset
+    test esi,esi
+    jz text_left_done
+    dec esi
+    mov eax,esi
+    call ReadByte
+    cmp al,10
+    jne text_left_set
+    test esi,esi
+    jz text_left_set
+    lea eax,[esi-1]
+    call ReadByte
+    cmp al,13
+    jne text_left_set
+    dec esi
+text_left_set:
+    mov cursorOffset,esi
+text_left_done:
+    ret
+TextLeft endp
+
+TextRight proc
+    mov esi,cursorOffset
+    cmp esi,fileSize
+    jae text_right_done
+    mov eax,esi
+    call ReadByte
+    inc esi
+    cmp al,13
+    jne text_right_set
+    cmp esi,fileSize
+    jae text_right_set
+    mov eax,esi
+    call ReadByte
+    cmp al,10
+    jne text_right_set
+    inc esi
+text_right_set:
+    mov cursorOffset,esi
+text_right_done:
+    ret
+TextRight endp
+
+; EAX signed display-row displacement. Retain column, clamp on shorter rows.
+TextVertical proc
+    mov textMoveRows,eax
+    mov eax,cursorOffset
+    call FindTextRow
+    mov ebp,ecx
+    add ebx,textMoveRows
+    jns text_vertical_row
+    xor ebx,ebx
+text_vertical_row:
+    call TextLineOffset
+    mov esi,eax
+    call NextTextRow
+    cmp eax,edx
+    jne text_vertical_column
+    cmp edx,fileSize
+    jae text_vertical_column
+    dec edx                       ; wrap boundary belongs to the next row
+text_vertical_column:
+    mov eax,esi
+    mov ecx,ebp
+    call TextOffsetAtColumn
+    mov cursorOffset,eax
+    ret
+TextVertical endp
+
+; Text typing inserts; Enter inserts a complete DOS CR/LF or nothing if full.
+EditText proc
+    cmp al,13
+    je text_enter
+    cmp al,9
+    je text_edit_insert
+    cmp al,20h
+    jb text_edit_done
+    cmp al,7Eh
+    ja text_edit_done
+text_edit_insert:
+    mov edx,fileSize
+    cmp edx,bufferCapacity
+    jae text_edit_full
+    call InsertTextCharacter
+text_edit_done:
+    ret
+text_enter:
+    mov edx,bufferCapacity
+    sub edx,fileSize
+    cmp edx,2
+    jb text_edit_full
+    mov al,13
+    call InsertTextCharacter
+    mov al,10
+    call InsertTextCharacter
+    mov textLastByte,13
+    ret
+text_edit_full:
+    mov statusText,offset msgFull
+    ret
+EditText endp
+
+; Caller has checked capacity. Insert AL and advance past it.
+InsertTextCharacter proc
+    mov textLastByte,al
+    push ax
+    call InsertByte
+    pop dx
+    mov eax,cursorOffset
+    call WriteByte
+    inc cursorOffset
+    mov textLastValid,1
+    ret
+InsertTextCharacter endp
+
+; Delete a complete CR/LF pair, or one ordinary byte; EOF remains a no-op.
+DeleteText proc
+    mov esi,cursorOffset
+    cmp esi,fileSize
+    jae text_delete_done
+    mov eax,esi
+    call ReadByte
+    cmp al,13
+    jne text_delete_one
+    inc esi
+    cmp esi,fileSize
+    jae text_delete_one
+    mov eax,esi
+    call ReadByte
+    cmp al,10
+    jne text_delete_one
+    call DeleteByte
+text_delete_one:
+    call DeleteByte
+text_delete_done:
+    ret
+DeleteText endp
+
 MoveRight proc
     mov eax,cursorOffset
     cmp eax,fileSize
@@ -900,6 +1278,8 @@ backward_in_range:
 MoveBackward endp
 
 EnsureVisible proc
+    cmp viewMode,2
+    je EnsureTextVisible
     mov eax,viewOffset
     xor edx,edx
     div bytesPerRow
@@ -930,6 +1310,7 @@ EnsureVisible endp
 ; AX = BIOS key word. Each dispatch returns to its caller; no nested event
 ; loops, cross-procedure jumps into epilogues, recursion, or SP resets.
 HandleKey proc
+    mov textLastValid,0
     cmp al,27
     je key_quit
     cmp al,9
@@ -940,6 +1321,8 @@ HandleKey proc
     je key_extended
     cmp al,0E0h
     je key_extended
+    cmp viewMode,2
+    je key_text_input
     cmp editMode,2
     je key_ascii_input
     cmp al,' '
@@ -948,6 +1331,9 @@ HandleKey proc
     ret
 key_ascii_input:
     call EditAscii
+    ret
+key_text_input:
+    call EditText
     ret
 key_extended:
     cmp ah,3Bh
@@ -961,7 +1347,7 @@ key_extended:
     cmp ah,40h
     je key_hex
     cmp ah,41h
-    je key_ascii
+    je key_text_mode
     cmp ah,4Bh
     je key_left
     cmp ah,4Dh
@@ -988,30 +1374,61 @@ key_extended:
     je key_delete
     ret
 key_left:
+    cmp viewMode,2
+    je TextLeft
     call MoveLeft
     ret
 key_right:
+    cmp viewMode,2
+    je TextRight
     call MoveRight
     ret
 key_up:
+    cmp viewMode,2
+    jne key_up_numeric
+    mov eax,-1
+    jmp TextVertical
+key_up_numeric:
     mov eax,bytesPerRow
     call MoveBackward
     ret
 key_down:
+    cmp viewMode,2
+    jne key_down_numeric
+    mov eax,1
+    jmp TextVertical
+key_down_numeric:
     mov eax,cursorOffset
     add eax,bytesPerRow
     call SetCursor
     ret
 key_page_up:
+    cmp viewMode,2
+    jne key_page_up_numeric
+    mov eax,-DATA_ROWS
+    jmp TextVertical
+key_page_up_numeric:
     mov eax,pageBytes
     call MoveBackward
     ret
 key_page_down:
+    cmp viewMode,2
+    jne key_page_down_numeric
+    mov eax,DATA_ROWS
+    jmp TextVertical
+key_page_down_numeric:
     mov eax,cursorOffset
     add eax,pageBytes
     call SetCursor
     ret
 key_home:
+    cmp viewMode,2
+    jne key_home_numeric
+    mov eax,cursorOffset
+    call FindTextRow
+    mov cursorOffset,eax
+    ret
+key_home_numeric:
     mov eax,cursorOffset
     xor edx,edx
     div bytesPerRow
@@ -1021,6 +1438,24 @@ key_home:
     call SetCursor
     ret
 key_end:
+    cmp viewMode,2
+    jne key_end_numeric
+    mov eax,cursorOffset
+    call FindTextRow
+    ; At a hard wrap, the boundary belongs to the following display row.
+    cmp edx,fileSize
+    je key_text_end
+    mov eax,edx
+    call ReadByte
+    cmp al,13
+    je key_text_end
+    cmp al,10
+    je key_text_end
+    dec edx
+key_text_end:
+    mov cursorOffset,edx
+    ret
+key_end_numeric:
     mov eax,cursorOffset
     xor edx,edx
     div bytesPerRow
@@ -1054,18 +1489,29 @@ key_next_byte:
     call SetCursor
     ret
 key_previous_byte:
+    cmp viewMode,2
+    jne key_previous_numeric
+    cmp cursorOffset,0
+    je key_text_back_done
+    call TextLeft
+    call DeleteText
+key_text_back_done:
+    ret
+key_previous_numeric:
     mov eax,1
     mov digitIndex,0
     call MoveBackward
     ret
 key_toggle:
-    mov al,viewMode
-    xor al,1
+    cmp viewMode,2
+    jne key_toggle_numeric
+    mov al,9
+    jmp EditText
+key_toggle_numeric:
+    mov al,2
     cmp editMode,2
     jne key_toggle_set
-    mov viewMode,al
-    mov viewOffset,0
-    mov al,2
+    mov al,viewMode
 key_toggle_set:
     call SetMode
     ret
@@ -1077,18 +1523,16 @@ key_hex:
     xor al,al
     call SetMode
     ret
-key_ascii:
-    mov al,2
-    cmp editMode,2
-    jne key_ascii_set
-    mov al,viewMode
-key_ascii_set:
+key_text_mode:
+    mov al,3
     call SetMode
     ret
 key_insert:
     call InsertByte
     ret
 key_delete:
+    cmp viewMode,2
+    je DeleteText
     call DeleteByte
     ret
 key_save:
@@ -1231,6 +1675,11 @@ RenderScreen proc
     mov si,offset titleText
     call PutString
     mov si,offset hexText
+    cmp viewMode,2
+    jne render_numeric_mode
+    mov si,offset textModeText
+    jmp render_mode
+render_numeric_mode:
     cmp editMode,2
     jne render_check_binary
     mov si,offset asciiHexText
@@ -1251,6 +1700,15 @@ render_mode:
     mov si,offset changedText
     call PutString
 render_columns:
+    cmp viewMode,2
+    jne render_numeric_columns
+    mov di,160
+    mov ah,ATTR_COLUMN
+    mov si,offset textColumnText
+    call PutString
+    call RenderText
+    jmp render_status
+render_numeric_columns:
     mov di,160
     mov ah,ATTR_COLUMN
     mov si,offset columnText
@@ -1283,6 +1741,7 @@ render_next_byte:
     inc renderRow
     cmp renderRow,DATA_ROWS
     jb render_next_row
+render_status:
     mov di,22 * 160
     mov ah,ATTR_STATUS
     mov si,offset offsetText
@@ -1308,10 +1767,164 @@ render_next_byte:
     mov ah,ATTR_FOOTER
     mov si,statusText
     call PutString
+    cmp viewMode,2
+    jne render_inspector_done
+    call RenderTextValues
+render_inspector_done:
     pop es
     call PlaceCursor
     ret
 RenderScreen endp
+
+; Full-width text content. Use exactly the same row parser as navigation.
+RenderText proc
+    mov eax,viewOffset
+    mov renderOffset,eax
+    mov renderRow,0
+render_text_row:
+    mov renderColumn,0
+    mov eax,renderOffset
+    call NextTextRow
+    mov textRowEnd,edx
+    mov textRowNext,eax
+    mov ax,renderRow
+    add ax,DATA_TOP
+    call RowAddress
+render_text_character:
+    mov eax,renderOffset
+    cmp eax,textRowEnd
+    jae render_text_marker
+    call ReadByte
+    cmp al,9
+    je render_text_tab
+    cmp al,20h
+    jb render_text_dot
+    cmp al,7Eh
+    jbe render_text_output
+render_text_dot:
+    mov al,'.'
+render_text_output:
+    mov ah,ATTR_NORMAL
+    mov edx,renderOffset
+    cmp edx,cursorOffset
+    jne render_text_store
+    mov ah,ATTR_SELECTED
+render_text_store:
+    stosw
+    inc renderOffset
+    inc renderColumn
+    jmp render_text_character
+render_text_tab:
+    mov cx,renderColumn
+    and cx,7
+    neg cx
+    add cx,8
+    add renderColumn,cx
+    mov ax,ATTR_NORMAL * 256 + ' '
+    mov edx,renderOffset
+    cmp edx,cursorOffset
+    jne render_text_tab_fill
+    mov ah,ATTR_SELECTED
+render_text_tab_fill:
+    stosw
+    mov ah,ATTR_NORMAL
+    loop render_text_tab_fill
+    inc renderOffset
+    jmp render_text_character
+render_text_marker:
+    ; A hard-wrapped row has no spare cell. EOF/newline use a visible cursor.
+    mov eax,textRowEnd
+    cmp eax,textRowNext
+    jne render_text_newline
+    cmp eax,fileSize
+    jne render_text_advance
+    ; An 80-character final row's EOF belongs on the following row.
+    cmp renderColumn,80
+    je render_text_advance
+    mov al,'-'
+    jmp render_text_marker_output
+render_text_newline:
+    cmp eax,cursorOffset
+    jne render_text_advance
+    mov al,' '
+render_text_marker_output:
+    mov ah,ATTR_NORMAL
+    mov edx,textRowEnd
+    cmp edx,cursorOffset
+    jne render_text_marker_store
+    mov ah,ATTR_SELECTED
+render_text_marker_store:
+    stosw
+render_text_advance:
+    mov eax,textRowNext
+    cmp eax,renderOffset
+    jne render_text_continue
+    cmp renderColumn,80
+    je render_text_continue
+    cmp eax,fileSize
+    je render_text_done
+render_text_continue:
+    mov renderOffset,eax
+    inc renderRow
+    cmp renderRow,DATA_ROWS
+    jb render_text_row
+render_text_done:
+    ret
+RenderText endp
+
+; Bottom-right byte inspector: current byte, or latest typed byte at EOF.
+; Navigation clears the typed-byte fallback. Dashes mean no byte is selected.
+RenderTextValues proc
+    mov renderAttr,0
+    mov eax,cursorOffset
+    cmp eax,fileSize
+    jb render_value_read
+    cmp textLastValid,0
+    je render_value_labels
+    mov al,textLastByte
+    jmp render_value_ready
+render_value_read:
+    call ReadByte
+render_value_ready:
+    mov renderValue,al
+    mov renderAttr,1
+render_value_labels:
+    mov di,24*160 + 58*2
+    mov ah,ATTR_STATUS
+    mov si,offset byteHexText
+    call PutString
+    mov cx,2
+    mov dh,renderValue
+render_value_hex:
+    rol dh,4
+    mov al,'-'
+    cmp renderAttr,0
+    je render_value_hex_store
+    mov al,dh
+    and al,0Fh
+    call HexCharacter
+render_value_hex_store:
+    mov ah,ATTR_VALUE
+    stosw
+    loop render_value_hex
+    mov ah,ATTR_STATUS
+    mov si,offset byteBinText
+    call PutString
+    mov dh,renderValue
+    mov cx,8
+render_value_binary:
+    mov al,'-'
+    cmp renderAttr,0
+    je render_value_binary_store
+    shl dh,1
+    mov al,'0'
+    adc al,0
+render_value_binary_store:
+    mov ah,ATTR_VALUE
+    stosw
+    loop render_value_binary
+    ret
+RenderTextValues endp
 
 RenderByte proc
     mov eax,renderOffset
@@ -1412,6 +2025,17 @@ render_byte_done:
 RenderByte endp
 
 PlaceCursor proc
+    cmp viewMode,2
+    jne place_numeric_cursor
+    mov dx,textCursorRow
+    add dl,DATA_TOP
+    mov dh,dl
+    mov dl,byte ptr textCursorCol
+    xor bh,bh
+    mov ah,02h
+    int 10h
+    ret
+place_numeric_cursor:
     mov eax,cursorOffset
     sub eax,viewOffset
     xor edx,edx

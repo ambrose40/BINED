@@ -1,6 +1,7 @@
 # EZ Binary Editor 3
 
-`BINED3.ASM` is a rewritten DOS hex/binary/ASCII editor built with the supplied
+`BINED3.ASM` is a DOS hex/binary editor with ASCII-column and full-screen Text
+editing, built with the supplied
 TASM 2.5 and TLINK 4.0. The runnable output is **`BUILD\BINED3.EXE`**.
 
 ## Build, run, and test
@@ -103,42 +104,71 @@ details.
 | `0`–`9`, `A`–`F` in hex mode | Overwrite one hex digit; lowercase also works |
 | `0`, `1` in binary mode | Overwrite one bit, most significant bit first |
 | Printable characters in ASCII mode | Overwrite one whole byte, including spaces; preserve case |
-| Tab | Switch HEX ↔ BIN view, keeping ASCII or numeric editing focus |
+| Printable characters in Text mode | Insert characters at the cursor |
+| Tab in HEX/BIN | Toggle numeric ↔ right-hand ASCII editing in the current view |
+| Tab in Text | Insert one tab byte (`09h`), displayed at 8-column tab stops |
 | F5 / F6 | Binary / hex view with digit/bit editing |
-| F7 | Toggle ASCII ↔ numeric editing in the current HEX or BIN view |
+| F7 | Full-screen Text editor |
+| Enter in Text | Insert a DOS CR/LF line break (`0Dh 0Ah`) |
 | Left / Right | Previous / next hex digit, bit, or ASCII byte |
 | Up / Down | Previous / next row |
 | PgUp / PgDn | Previous / next screenful |
 | Home / End | First / last digit, bit, or ASCII byte of the current row |
 | Ctrl-Home / Ctrl-End | Start of file / EOF append position |
 | Space | Next byte in HEX/BIN; type a space in ASCII |
-| Backspace | Previous byte (does not delete) |
+| Backspace | Previous byte in HEX/BIN/ASCII; delete previous character/line break in Text |
 | Insert | Insert a zero byte before the cursor |
-| Delete | Remove the byte at the cursor |
+| Delete | Remove the byte at the cursor; a CR/LF pair is deleted together in Text |
 | F1 | Open the centred help window; any key returns |
 | F2 | Save |
 | F4 | Save as; Enter accepts, Esc cancels |
 | Esc | Quit; modified files prompt for Save, Discard, or Esc to cancel |
 
 The selected byte is highlighted. HEX view shows 16 bytes per row; BIN view
-shows 6. F7 puts the editing cursor in the current view's right-hand ASCII
-column, keeping its layout, viewport, and hex digits or binary bits visible.
-The title shows **ASCII (HEX)** or **ASCII (BIN)**. Tab switches the layout
-while keeping ASCII or numeric editing focus. F7 toggles that focus without
-changing the layout or viewport. For example:
-**HEX → F7 → ASCII (HEX) → Tab → ASCII (BIN) → Tab → ASCII (HEX) → F7 → HEX → Tab → BIN → Tab → HEX**.
-Left/Right move one byte at a time in ASCII mode. All modes show
+shows 6. **Tab** puts the editing cursor in the current view's right-hand ASCII
+column and back, preserving its layout and viewport. The title shows
+**ASCII (HEX)** or **ASCII (BIN)** while editing that column. **F5**, **F6**, and
+**F7** directly select **BIN**, **HEX**, and **Text**, respectively.
+Left/Right move one byte at a time in ASCII mode. Numeric/ASCII views show
 printable ASCII characters (`20h`–`7Eh`); other bytes appear as dots.
 Offsets, file size and buffer capacity are displayed in **hexadecimal**.
+
+### Full-screen Text editing
+
+**F7** uses the full 80-column editing area, without the offset/numeric gutters.
+Text wraps at 80 display columns and scrolls through 20 rows. Typing printable
+characters **inserts** them; **Enter** inserts CR/LF and **Tab** inserts a real
+`09h` byte, expanded visually to the next 8-column tab stop. No spaces replace
+tabs in the saved file. Existing CR/LF, bare CR, and bare LF all display as line
+breaks without converting the file's bytes.
+
+Left/Right move over characters, tabs, and complete CR/LF pairs. Up/Down and
+PgUp/PgDn move by display rows, retaining the column where possible and clamping
+on shorter rows; tabs have a single cursor position at their first cell.
+Home/End select the current display-row start/end; Ctrl-Home/Ctrl-End select
+file start/EOF. Backspace and Delete remove a whole CR/LF pair when joining
+lines. Enter needs two free bytes and leaves the document untouched if only
+one remains. Other unassigned control/non-ASCII input is ignored; non-printable
+file bytes display as dots and can still be inspected or deleted. Insert keeps
+its zero-byte insertion behavior. Use F5/F6 to edit any byte numerically.
+
+The bottom-right **`HEX:`** and **`BIN:`** fields show the actual selected byte
+(including `09h` or `0Dh` for a tab/line break). At EOF they show the latest
+typed byte until another key is pressed; Enter's fallback value is `0Dh`.
+Dashes indicate that no byte is selected. EOF is shown as `-`; the cursor on a
+line break is a highlighted blank. Changing views does not convert the file.
 
 The editor uses a **green-on-black** theme: bright-green hex/binary data and
 status labels, dark-green row offsets, and purple selected-byte highlights in
 the hex/binary data. The **filename and Save As input are also purple**.
 The editor title is **bright white**,
 the **OFFSET, DATA, and ASCII column labels are bright red**,
-the active **HEX/BIN/ASCII mode is bright yellow**, and the
+the active **HEX/BIN/ASCII/Text mode is bright yellow**, and the
 right-hand **ASCII preview is light gray**. In ASCII mode the selected
 character or EOF marker is purple; in HEX/BIN the entire preview stays gray.
+Full-screen **Text characters are bright green** and the **current character
+or EOF marker is purple**, matching numeric editing. A selected tab highlights
+its first cell. The byte inspector has green labels and dark-purple values.
 The numeric **Offset, Size, and Capacity values are dark purple**;
 the **bottom status line and Save As/unsaved-quit prompts are light gray**.
 F1 opens a centred, black-filled window
@@ -155,8 +185,10 @@ and change its selected digit/bit; typing within the file preserves its other
 bits. ASCII writes the typed character's complete byte and advances to the
 next byte. ASCII accepts printable 7-bit characters, including spaces and
 punctuation; Enter and other unassigned control/non-ASCII characters are
-ignored. Use HEX/BIN to enter control bytes such as CR/LF, tabs, or values
-above `7Eh`. Insert/Delete change file length; ordinary typing overwrites.
+ignored in the right-hand ASCII column. Text mode additionally inserts CR/LF
+and tabs; use numeric HEX/BIN for other control/high bytes. Insert/Delete change
+file length; ordinary typing overwrites in numeric/right-column ASCII modes
+and inserts in Text.
 Delete at EOF is a no-op. There is no undo command.
 
 ## Memory and CPU design
@@ -187,10 +219,12 @@ DGROUP holds only editor state and paths, never the file contents.
 - **Arguments and disk:** `ParseCommandLine`, `LoadFile`, `TransferFile`,
   `SaveDocument` and small handle/rename helpers.
 - **Byte storage:** `MapBuffer`, `ReadByte`, `WriteByte`.
-- **Editing/navigation:** `EditDigit`, `EditAscii`, `InsertByte`, `DeleteByte`,
-  `SetMode`, movement procedures, `EnsureVisible`.
+- **Editing/navigation:** `EditDigit`, `EditAscii`, `EditText`, `InsertByte`,
+  `DeleteByte`, `DeleteText`, `SetMode`, movement procedures, `EnsureVisible`.
+- **Text layout:** `NextTextRow`, `FindTextRow`, `TextColumn`,
+  `TextOffsetAtColumn`, `TextLineOffset`, `TextVertical`, `EnsureTextVisible`.
 - **Input:** `HandleKey` dispatches one BIOS key and returns.
-- **Display:** `RenderScreen`, `RenderByte`, bounded text/hex output,
+- **Display:** `RenderScreen`, `RenderByte`, `RenderText`, `RenderTextValues`, bounded text/hex output,
   cursor placement and modal dialogs.
 
 Only `Main` owns the editor event loop. Procedures return normally and use
@@ -275,12 +309,18 @@ across 64 KiB, navigation, 10,000 dispatch cycles
 status colours, modal help layout/bounds and editor redraw, a
 131,089-byte disk round trip, replacement saves, oversized loads and short
 reads. It requires at least 131,089 bytes of available file-buffer memory.
+Text checks additionally cover CR/LF insertion/deletion across 64 KiB, an exact
+`A\r\nB` save/load, atomic Enter at capacity, mixed newline styles, 8-column
+tabs and vertical navigation, full-width wrapping/EOF/empty-line scrolling,
+text/selection colours, and selected/typed HEX/BIN values. A separate 1,000-cycle
+Text insert/newline/backspace stress check preserves SP over 4,000 key events.
 
 `KEYDRIVE.COM` separately runs the **release EXE** via DOS EXEC, supplying
-BIOS keystrokes for help, hex/binary/ASCII editing, independent Tab view and
-F7 focus toggling (including the sequence above), ASCII spaces
-and punctuation, insert/delete, save-as and save-and-quit. The final UI output
-is `FF 7A 20 21 3F 20 48` (`FF` followed by `z !? H`).
+BIOS keystrokes for help, numeric/right-column ASCII editing, F5/F6/F7 mode
+selection, Tab focus toggling, full-screen Text with CR/LF/tab insertion,
+Backspace/Delete, navigation, save-as and save-and-quit. The final UI output is
+`b"\xffz !? H\r\nText\r\n\tOK"`. `TEXT.BIN` independently round-trips
+`b"A\r\nB"` through production save/load procedures.
 `VERIFY.PY` independently checks the exact output bytes and
 absence of leftover staging files. No test code is included in the release
 editor.

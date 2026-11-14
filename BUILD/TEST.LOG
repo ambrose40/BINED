@@ -1,4 +1,4 @@
-PASS: command tail, memory boundaries, editing, navigation,
-      10000 dispatches, rendering, DOS load/save and errors.
+PASS: HEX/BIN/ASCII/Text, CR/LF/tab editing and navigation,
+      stack balance, rendering, command tail and DOS load/save.
 NOTE: mounted DOS drive ignores read-only attributes;
       directory-target protection tested instead.

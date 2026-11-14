@@ -4,7 +4,8 @@ Last updated: 2026-11-14.
 
 ## Purpose and user preferences
 
-This is a DOS hex/binary/ASCII editor rewritten from an abandoned assembly project.
+This is a DOS hex/binary editor with right-column ASCII and full-screen Text
+editing, rewritten from an abandoned assembly project.
 The user's original blockers were memory corruption and stack resets. They
 requested a readable, procedure-based `BINED3.ASM`, 486-class instructions,
 command-line file loading, and hex/binary editing of modest-size files.
@@ -17,7 +18,7 @@ Persistent user requirements:
   sources stored under `BUILD`; do not blanket-clean that directory.
 - Use green over black, dark-green secondary text, and purple highlights.
 - Main title is bright white; OFFSET/DATA/ASCII column labels are bright red.
-  The active HEX/BIN/ASCII label is bright yellow. Right-hand ASCII preview
+  The active HEX/BIN/ASCII/Text label is bright yellow. Right-hand ASCII preview
   symbols are light gray in HEX/BIN (including the selected byte); in ASCII
   mode the selected character/EOF marker is purple. Hex/binary selection
   remains purple in the data column.
@@ -31,10 +32,13 @@ Persistent user requirements:
   both before every commit with all completed work and actual verification.
   Root `AGENTS.md` makes both requirements discoverable for future agents.
 - Use Conventional Commits messages (`type(scope): summary`) when committing.
-- ASCII editing must work in both numeric layouts. F7 toggles ASCII/numeric
-  editing in the current view; Tab changes HEX/BIN while preserving focus:
-  HEX -> F7 -> ASCII (HEX) -> Tab -> ASCII (BIN) -> Tab -> ASCII (HEX) ->
-  F7 -> HEX -> Tab -> BIN -> Tab -> HEX.
+- Current controls (2026-11-14 clarification): F5 selects BIN, F6 selects HEX,
+  F7 selects full-screen Text. Tab toggles numeric/right-column ASCII focus in
+  HEX/BIN, and inserts a tabulation byte in Text. This supersedes earlier
+  Tab view cycling and F7 ASCII-focus behavior recorded in the changelog.
+- Full-screen Text uses bright-green characters and a purple current character,
+  matching HEX/BIN data. Enter inserts DOS CR/LF; Tab inserts `09h`, displayed
+  using 8-column tab stops. The bottom-right corner shows HEX:/BIN: byte values.
 
 ## Active files
 
@@ -77,11 +81,16 @@ as `db6147e` (`feat(editor): add ASCII editing in hex and binary views`) and
 pushed to `origin/master`, including help, regression checks, README/memory,
 pre-commit memory instructions, and tracked rebuilt BUILD artifacts. Branch
 `master` tracks `origin/master` at `https://github.com/ambrose40/BINED.git`.
-The user's separate `LAUNCH.BAT` display edits are now being packaged as
-`feat(launcher): show usage examples and output separators`: the menu prints
+The user's separate `LAUNCH.BAT` display edits were committed locally as
+`31cf0c4` (`feat(launcher): show usage examples and output separators`): the menu prints
 four DOS editor invocation examples, and action/error/exit paths include
 additional `echo .` dot separator lines. Menu choices and dispatch are unchanged.
-This follow-up request is commit-only.
+That follow-up was commit-only; it was not pushed in that task.
+At Text-feature packaging, both `master` and the tracked `origin/master` point
+to `31cf0c4`. The full-screen Text feature is prepared for
+`feat(editor): add full-screen text editing and byte inspector`, including
+corrected controls, help, README/memory, core/release/host tests, rebuilt tracked
+BUILD artifacts, and the new exact-byte `BUILD/TESTDATA/TEXT.BIN` fixture.
 
 ## Architecture and invariants
 
@@ -100,17 +109,41 @@ This follow-up request is commit-only.
   contents are kept in the separate DOS allocation.
 - Bytes in memory are authoritative. Rendering/mode changes never parse
   characters back from video memory.
-- `editMode`: 0 = HEX digit editing, 1 = BIN bit editing, 2 = ASCII byte editing.
-  Independent `viewMode` is 0 = HEX layout, 1 = BIN layout. F5/F6 select BIN/HEX
-  layout and numeric editing; F7 toggles ASCII/numeric focus without changing
-  layout or viewport. Tab toggles `viewMode` while retaining ASCII focus or
-  selecting numeric editing for the new layout. Mode/focus changes reset
-  digitIndex and preserve cursorOffset/file contents. viewOffset resets when
-  the numeric layout changes; selecting the same layout or toggling F7 preserves
-  it. HEX layout uses 16 bytes per row (320 per page),
+- `editMode`: 0 = HEX digit editing, 1 = BIN bit editing, 2 = right-column
+  ASCII overwrite, 3 = full-screen Text insertion. Independent `viewMode` is
+  0 = HEX, 1 = BIN, 2 = Text. F5/F6 select BIN/HEX numeric editing; F7 selects
+  Text. Tab switches numeric/ASCII focus in HEX/BIN without changing layout
+  or viewport; in Text it inserts `09h`. Mode/focus changes reset digitIndex
+  and preserve file contents/cursorOffset, except Text normalizes an offset on
+  the LF half of CR/LF to its CR cell. Numeric layout changes reset viewOffset;
+  selecting the same numeric layout or toggling Tab focus preserves it. F7
+  reinitializes the Text viewport and EnsureVisible scrolls to the cursor.
+  HEX layout uses 16 bytes per row (320 per page),
   BIN uses 6 (120 per page), including when ASCII editing is active.
   `digitsPerByte` is 2/8/1 for navigation. Renderers use viewMode independently
   to retain two hex digits or eight binary bits while ASCII has editing focus.
+- Text uses all 80 content columns across the existing 20 data rows (2..21),
+  without numeric/offset gutters; title/header and status/path/footer remain.
+  `NextTextRow` is the shared bounded parser for 80-column wraps, CR/LF,
+  bare CR/LF, and tabs. `FindTextRow`, `TextColumn`, `TextOffsetAtColumn`, and
+  `TextLineOffset` map byte offsets/display rows/columns without converting
+  data. `EnsureTextVisible` tracks a row-aligned byte viewOffset and caches the
+  hardware cursor's row/column. CR/LF and a tab expansion each have one cursor
+  position; tabs use 8-column stops. Up/Down/PgUp/PgDn preserve the current
+  column where possible, clamping to shorter rows; Home/End use display rows.
+- `EditText` inserts printable characters and tabs rather than overwriting;
+  Enter inserts `0Dh 0Ah` only if both bytes fit. `InsertTextCharacter` reuses
+  DOS-owned byte storage/shifting. Backspace deletes the preceding character;
+  `DeleteText` removes a CR/LF pair together to join lines. Insert retains zero-
+  byte insertion. Other unassigned controls/high-byte input are ignored. All
+  existing bytes are preserved by rendering/mode changes; non-printables are
+  dots, selected newlines are purple blanks, EOF is `-`. No undo was added.
+- `RenderTextValues` writes the bottom-right `HEX: XX  BIN: XXXXXXXX` field at
+  zero-based row 24, columns 58..79: green labels/dark-purple values. It reads
+  the selected byte directly; at EOF it can show `textLastByte` after successful
+  typing (`0Dh` for Enter), until another key clears `textLastValid`. With no
+  selected/typed byte it shows dashes. `RenderText` uses bright-green text and
+  purple selection; a selected tab highlights only its first expansion cell.
 - ASCII mode uses the right-hand column (zero-based 61 in HEX, 66 in BIN) for
   its cursor and purple character/EOF selection. The yellow title says
   `ASCII (HEX)` or `ASCII (BIN)`. `EditAscii` overwrites/appends a complete
@@ -136,17 +169,17 @@ The `ATTR_*` constants near the top of `BINED3.ASM` define VGA text attributes:
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
-| `ATTR_NORMAL` | `0Ah` | Bright-green hex/binary data and default screen/help fill |
+| `ATTR_NORMAL` | `0Ah` | Bright-green hex/binary/Text data and default screen/help fill |
 | `ATTR_TITLE` | `02h` | Dark-green F1 any-key return description |
 | `ATTR_OFFSET` | `02h` | Dark-green row offsets |
 | `ATTR_SELECTED` | `0Dh` | Purple selected byte/EOF, filename, Save As input, help border/title |
 | `ATTR_STATUS` | `0Ah` | Bright-green Offset/Size/Capacity labels |
-| `ATTR_VALUE` | `05h` | Dark-purple Offset/Size/Capacity numeric values |
+| `ATTR_VALUE` | `05h` | Dark-purple Offset/Size/Capacity and Text HEX/BIN values |
 | `ATTR_FOOTER` | `07h` | Light-gray bottom status line and Save As/unsaved-quit prompts/fill |
 | `ATTR_HELP_KEY` | `0Eh` | Bright-yellow key names in F1 help |
 | `ATTR_HEADING` | `0Fh` | Bright-white editor title |
 | `ATTR_COLUMN` | `0Ch` | Bright-red OFFSET/DATA/ASCII column labels |
-| `ATTR_MODE` | `0Eh` | Bright-yellow active HEX/BIN/ASCII label |
+| `ATTR_MODE` | `0Eh` | Bright-yellow active HEX/BIN/ASCII/Text label |
 | `ATTR_ASCII` | `07h` | Light-gray ASCII preview and F1 descriptions/EOF note; ASCII edit selection uses `ATTR_SELECTED` |
 
 All backgrounds are black. Existing video assertions check selected `A` as
@@ -192,8 +225,8 @@ call TESTS\TEST.BAT
 
 With no filename the editor opens/creates `UNTITLED.BIN`; missing files start
 empty. One quoted filename is accepted, subject to DOS-visible/8.3 paths.
-F1 help, F2 save, F4 save-as, F5 binary, F6 hex, F7 toggles ASCII/numeric focus,
-Tab switches HEX/BIN while retaining editing focus, Esc quit.
+F1 help, F2 save, F4 save-as, F5 binary, F6 hex, F7 Text; Tab toggles numeric/
+right-column ASCII in HEX/BIN or inserts a tab byte in Text. Esc quits.
 
 Unattended build/test, followed by independent host verification:
 
@@ -215,13 +248,15 @@ with this bundled environment.
 
 ### Coverage and last verified results
 
-Last runtime verification was the independent Tab/F7 controls follow-up on
-2026-11-14.
+Last runtime verification was the full-screen Text/CR-LF/tab changeset on
+2026-11-14, including the corrected F5/F6/F7/Tab bindings.
 Production/core/release integration and host byte verification passed using
 the waited DOSBox command above. Earlier palette assertions remain covered.
-For commit packaging, host verification was rerun successfully and authored
-source/documentation whitespace checks passed. DOS runtime tests were not
-repeated for packaging; their results are from the final Tab/F7 changeset.
+Production, core, and release integration were rebuilt and rerun for this
+changeset. Authored source/documentation whitespace checks passed.
+For the subsequent commit/push task, host byte/log verification was rerun and
+authored-file whitespace checks passed. Runtime DOS tests were not repeated
+for packaging; their actual results are from the completed Text changeset.
 
 - Production and test sources assembled without warnings with bundled
   TASM/TLINK. Preserved debugging sources were not rebuilt for this changeset.
@@ -241,18 +276,25 @@ repeated for packaging; their results are from the final Tab/F7 changeset.
   ASCII tests check all 95 printable characters, case/space/punctuation,
   ignored controls/DEL/high bytes,
   unchanged-overwrite dirty state, empty-file append, Insert/Delete, full-buffer
-  rejection/overwrite, byte/row navigation, Tab view switching in both focus
-  states, and F7 ASCII/numeric toggling in each layout. Both core and release
-  integration exercise the user's exact Tab/F7 sequence. BIN-ASCII checks
+  rejection/overwrite, byte/row navigation, Tab numeric/ASCII toggling in each
+  layout and F5/F6/F7 direct mode selection. BIN-ASCII checks
   include six-byte rows, page movement, preserved viewport/reset digitIndex on
-  F7 entry/exit, unchanged data/dirty state on Tab,
+  Tab entry/exit, unchanged data/dirty state on Tab,
   printable overwrite/space/append, column 66 selection/EOF, binary rendering,
   and scrolled EOF cursor bounds.
-- Release integration exercises help in HEX and BIN-ASCII, hex/binary input
-  and ASCII in both layouts, Tab/F7 transitions, space/punctuation input,
-  insert/delete, save-as, and save-and-quit using the actual production EXE.
+- Text checks cover character/tab/CR-LF insertion, Backspace/Delete joining
+  lines, two-byte capacity rejection without partial edits, full/empty and
+  ignored-input bounds, mixed newline styles, tabs/row/page navigation,
+  normalized CR/LF cursor positions, insertion/deletion and visible cursor
+  beyond 64 KiB, 80-column wrapping/scrolling, empty-line/empty-file rendering,
+  green/purple attributes, bottom-right selected/typed byte values, and tab
+  expansion/cursor alignment. A separate 1,000-cycle insertion/newline/deletion
+  stress loop checks another 4,000 key events with unchanged SP.
+- Release integration exercises help in numeric, ASCII and Text views; F5/F6/F7
+  selection; Tab numeric/ASCII focus; Text CR/LF/tab insertion, Backspace/Delete,
+  Home/End, save-as and save-and-quit using the actual production EXE.
 - Python verified `ROUND.BIN` (131,089 pattern bytes), `EMPTY.BIN` (empty),
-  `UI2.BIN` (`FF 7A 20 21 3F 20 48`, i.e. FF followed by `z !? H`), absent `UI.BIN`,
+  `TEXT.BIN` (`b"A\r\nB"`), `UI2.BIN` (`b"\xffz !? H\r\nText\r\n\tOK"`), absent `UI.BIN`,
   and no test-directory staging leftovers.
 - Expected `ROUND.BIN` SHA-256:
   `555e538c02e4151ffb942d0227251d8a8d585368c7bf68c9e58ffac233281fdf`.
