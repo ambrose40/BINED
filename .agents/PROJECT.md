@@ -142,6 +142,14 @@ and committed separately; no push was requested for these improvement commits.
   row's boundary. Full-row End stays on its last byte, including at EOF.
   A selected full-width newline uses a purple `<` in column 79; its raw offset
   and inspector value still refer to the newline. Cursor columns stay 0..79.
+  A bounded 128-entry offset/absolute-row ring caches each 32nd scanned row and
+  recent lookup rows. FindTextRow/TextLineOffset start from the nearest valid
+  checkpoint. WriteByte marks the earliest modified offset; DeleteByte marks
+  even a tail deletion; LoadFile resets the cache. Lazy validation drops anchors
+  from two bytes before an edit onward (CR/LF boundary effects), keeping earlier
+  prefixes. Unmarked size changes reset the cache conservatively. DGROUP array
+  indexing must use 16-bit SI/DI/BP with DS overrides for BP: TLINK 4 rejects
+  32-bit relocation records emitted by symbol-plus-ESI/ECX addressing.
 - `EditText` inserts printable characters and tabs rather than overwriting;
   Enter inserts `0Dh 0Ah` only if both bytes fit. `InsertTextCharacter` reuses
   DOS-owned byte storage/shifting. Backspace deletes the preceding character;
@@ -264,6 +272,13 @@ Explicit existing `.OBJ` output paths produced a repeat-build path issue
 with this bundled environment.
 
 ### Coverage and last verified results
+
+Latest verification: improvement step 3 (2026-11-14), RUN.PY fresh DOS/core/
+release/byte/manifest checks and all five HOSTTEST cases passed. CACHE.INC
+checks warm/cold lookup agreement after overwrite, insertion, deletion and
+size changes, plus at most 96 row parses for 32 warm viewport updates on a
+131,089-byte document. The external audit benchmark measured both 4 KiB and
+128 KiB warm update batches below one BIOS tick (previous 128 KiB: 39 ticks).
 
 Latest verification: improvement step 2 (2026-11-14), RUN.PY fresh build/core/
 release/byte/manifest checks passed, plus all five HOSTTEST negative cases.

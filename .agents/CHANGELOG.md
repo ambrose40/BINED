@@ -414,3 +414,22 @@ introduced on 2026-10-23.
   checked exact bytes/logs and fresh hashes. `python TESTS/HOSTTEST.PY` passed
   all five negative cases. Authored-file whitespace check passed.
 - **Remaining:** Steps 3 and 4 follow. No push was requested.
+
+## 2026-11-14 — Improvement 3: bounded Text layout checkpoints
+
+- **Request:** Cache Text layout for responsiveness, verify, update memory and
+  commit as the third independent improvement step.
+- **Changes:** Added a 128-entry row/offset checkpoint ring, nearest-anchor
+  lookups, periodic/recent checkpoints and lazy edit invalidation in BINED3.ASM.
+  Byte writes, tail deletion, load and unmarked size changes invalidate safely;
+  existing DOS-owned bytes remain authoritative. Added CACHE.INC correctness/
+  scan-work regressions, README/memory updates and rebuilt tracked artifacts.
+- **Verification:** RUN.PY fresh production/core/release tests, exact bytes/logs/
+  manifest checks, five HOSTTEST cases and authored whitespace check passed.
+  Cached results matched uncached scans after mutations; 32 warm large-file
+  viewport updates required at most 96 row parses. External DOSBox audit now
+  places exact-width End at 79 and following text on row 1; both small/large
+  warm timing batches were below one BIOS tick (old large batch: 39 ticks).
+  An initial TLINK 4 rejection of 32-bit indexed relocations was corrected by
+  using explicitly 16-bit DGROUP indexing before successful verification.
+- **Remaining:** Step 4 follows. No push was requested.

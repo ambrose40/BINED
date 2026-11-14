@@ -157,6 +157,8 @@ The bottom-right **`HEX:`** and **`BIN:`** fields show the actual selected byte
 typed byte until another key is pressed; Enter's fallback value is `0Dh`.
 Dashes indicate that no byte is selected. EOF is shown as `-`; the cursor on a
 line break is a highlighted blank. Changing views does not convert the file.
+Text layout uses a bounded 128-checkpoint cache (about 1 KiB) for nearby row
+lookups. Edits invalidate affected checkpoints; file bytes remain authoritative.
 An immediate CR/LF, CR, or LF after exactly 80 display columns terminates that
 same row. End stays on the last character of a full row, including at EOF.
 Selecting a newline after a full row shows a purple `<` in its last cell.

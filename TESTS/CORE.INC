@@ -6,6 +6,9 @@ testStack       dw 0
 testLoops       dw 0
 testCapacity    dd 0
 testAttrSkipped db 0
+textRowScans    dd 0
+cacheTarget     dd 0
+cacheExpected   dd 4 dup (0)
 boundaryLength  dd 0
 boundaryTerm    dw 0
 boundaryLengths dd 79,80,81,159,160,0
@@ -609,6 +612,10 @@ test_text_dispatch:
     call HandleKey
     CHECK32 fileSize,0
     CHECK32 cursorOffset,0
+    mov ax,4000h
+    call HandleKey
+    call TestTextCache
+    jc TestFailed
     mov ax,4000h
     call HandleKey
     mov testCase,offset caseBoundary
@@ -1381,3 +1388,4 @@ TestVerifyPattern endp
 
 include TESTS\BOUNDS.INC
 include TESTS\SAVEFAIL.INC
+include TESTS\CACHE.INC

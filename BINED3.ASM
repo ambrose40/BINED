@@ -32,6 +32,7 @@ DATA_COLUMN     equ 10
 TEXT_ROW_EOF    equ 0
 TEXT_ROW_WRAP   equ 1
 TEXT_KIND_BREAK equ 2
+TEXT_CACHE_ROWS equ 128
 HELP_LEFT       equ 11
 HELP_TOP        equ 2
 HELP_WIDTH      equ 58
@@ -106,6 +107,12 @@ textLastByte    db 0
 textLastValid   db 0
 textRowWidth    dw 0
 textRowKind     db TEXT_ROW_EOF
+textCacheCount  dw 0
+textCacheNext   dw 0
+textCacheSize   dd 0
+textDirtyOffset dd 0FFFFFFFFh
+textCacheOffsets dd TEXT_CACHE_ROWS dup (0)
+textCacheLines   dd TEXT_CACHE_ROWS dup (0)
 hexDigits       db '0123456789ABCDEF'
 titleText       db ' EZ Binary Editor 3 | 486 real mode | ',0
 hexText         db 'HEX',0
@@ -306,6 +313,7 @@ ReadByte endp
 
 ; EAX = offset, DL = byte. Preserves all general registers.
 WriteByte proc
+    call MarkTextChanged
     push ebx
     call MapBuffer
     mov fs:[bx],dl
@@ -425,6 +433,7 @@ SkipTailSpaces endp
 ; uninitialized bytes or reporting incomplete saves as successful.
 ; ---------------------------------------------------------------------------
 LoadFile proc
+    call ResetTextCache
     mov dx,offset fileName
     mov ax,3D00h
     int 21h
@@ -862,6 +871,8 @@ DeleteByte proc
     mov esi,cursorOffset
     cmp esi,fileSize
     jae delete_done
+    mov eax,esi
+    call MarkTextChanged
     dec fileSize
 delete_shift:
     cmp esi,fileSize
@@ -880,10 +891,112 @@ delete_done:
     ret
 DeleteByte endp
 
+; EAX changed byte -> lazy cache invalidation. Preserve all general registers.
+MarkTextChanged proc
+    cmp eax,textDirtyOffset
+    jae text_changed_done
+    mov textDirtyOffset,eax
+text_changed_done:
+    ret
+MarkTextChanged endp
+
+ResetTextCache proc
+    mov textCacheCount,0
+    mov textCacheNext,0
+    mov textDirtyOffset,0FFFFFFFFh
+    push eax
+    mov eax,fileSize
+    mov textCacheSize,eax
+    pop eax
+    ret
+ResetTextCache endp
+
+; Invalidate anchors after the earliest edit (including CR/LF boundary effects).
+; This runs once per edit batch, rather than once per shifted byte.
+ValidateTextCache proc
+    pushad
+    mov eax,textDirtyOffset
+    cmp eax,0FFFFFFFFh
+    jne text_cache_dirty
+    mov eax,fileSize
+    cmp eax,textCacheSize
+    je text_cache_valid
+    call ResetTextCache           ; size changed without byte writes
+    jmp text_cache_valid
+text_cache_dirty:
+    sub eax,2
+    jnc text_cache_limit
+    xor eax,eax
+text_cache_limit:
+    xor esi,esi
+    xor edi,edi
+    movzx ecx,textCacheCount
+text_cache_compact:
+    jecxz text_cache_compacted
+    mov edx,textCacheOffsets[si]
+    cmp edx,eax
+    jae text_cache_discard
+    mov textCacheOffsets[di],edx
+    mov edx,textCacheLines[si]
+    mov textCacheLines[di],edx
+    add edi,4
+text_cache_discard:
+    add esi,4
+    dec ecx
+    jmp text_cache_compact
+text_cache_compacted:
+    shr edi,2
+    mov textCacheCount,di
+    mov textCacheNext,di
+    cmp di,TEXT_CACHE_ROWS
+    jb text_cache_compact_done
+    mov textCacheNext,0
+text_cache_compact_done:
+    mov textDirtyOffset,0FFFFFFFFh
+    mov eax,fileSize
+    mov textCacheSize,eax
+text_cache_valid:
+    popad
+    ret
+ValidateTextCache endp
+
+; EAX row start, EBX absolute row -> store checkpoint in a bounded ring.
+CacheTextRow proc
+    pushad
+    xor esi,esi
+    movzx ecx,textCacheCount
+text_cache_duplicate:
+    jecxz text_cache_add
+    cmp textCacheOffsets[si],eax
+    je text_cache_added
+    add esi,4
+    dec ecx
+    jmp text_cache_duplicate
+text_cache_add:
+    movzx esi,textCacheNext
+    shl esi,2
+    mov textCacheOffsets[si],eax
+    mov textCacheLines[si],ebx
+    cmp textCacheCount,TEXT_CACHE_ROWS
+    jae text_cache_advance
+    inc textCacheCount
+text_cache_advance:
+    inc textCacheNext
+    cmp textCacheNext,TEXT_CACHE_ROWS
+    jb text_cache_added
+    mov textCacheNext,0
+text_cache_added:
+    popad
+    ret
+CacheTextRow endp
+
 ; Text rows wrap at 80 cells; CR/LF, bare CR and bare LF end a row.
 ; EAX row start -> EDX content end, EAX next row start (equal at hard wrap/EOF).
 ; Preserves EBX/ECX/ESI; all reads are bounded by fileSize.
 NextTextRow proc
+IFDEF BINED_TEST
+    inc textRowScans
+ENDIF
     push ebx
     push ecx
     push esi
@@ -949,6 +1062,8 @@ NextTextRow endp
 FindTextRow proc
     push esi
     push edi
+    push ebp
+    call ValidateTextCache
     mov edi,eax
     cmp edi,fileSize
     jbe text_find_start
@@ -956,6 +1071,22 @@ FindTextRow proc
 text_find_start:
     xor esi,esi
     xor ebx,ebx
+    xor ebp,ebp
+    movzx edx,textCacheCount
+    shl edx,2
+text_find_anchor:
+    cmp ebp,edx
+    jae text_find_next
+    mov eax,ds:textCacheOffsets[bp]
+    cmp eax,edi
+    ja text_find_anchor_skip
+    cmp eax,esi
+    jb text_find_anchor_skip
+    mov esi,eax
+    mov ebx,ds:textCacheLines[bp]
+text_find_anchor_skip:
+    add ebp,4
+    jmp text_find_anchor
 text_find_next:
     mov eax,esi
     call NextTextRow
@@ -979,6 +1110,9 @@ text_find_next:
 text_find_advance:
     mov esi,eax
     inc ebx
+    test bl,31
+    jnz text_find_next
+    call CacheTextRow
     jmp text_find_next
 text_find_done:
     cmp edi,edx
@@ -991,10 +1125,12 @@ text_find_column:
     call TextColumn
     pop edx
     mov eax,esi
+    call CacheTextRow
     cmp ecx,80
     jb text_find_visible_column
     mov ecx,79                    ; full-row newline shares the last cursor cell
 text_find_visible_column:
+    pop ebp
     pop edi
     pop esi
     ret
@@ -1055,20 +1191,53 @@ TextOffsetAtColumn endp
 
 ; EBX display-row number -> EAX row start, saturating at EOF.
 TextLineOffset proc
+    push ebp
+    push ebx
     push ecx
     push edx
-    mov ecx,ebx
-    xor eax,eax
+    push esi
+    push edi
+    call ValidateTextCache
+    mov edi,ebx
+    xor ebx,ebx
+    xor esi,esi
+    xor ebp,ebp
+    movzx edx,textCacheCount
+    shl edx,2
+text_line_anchor:
+    cmp ebp,edx
+    jae text_line_next
+    mov eax,ds:textCacheLines[bp]
+    cmp eax,edi
+    ja text_line_anchor_skip
+    cmp eax,ebx
+    jb text_line_anchor_skip
+    mov ebx,eax
+    mov esi,ds:textCacheOffsets[bp]
+text_line_anchor_skip:
+    add ebp,4
+    jmp text_line_anchor
 text_line_next:
-    jecxz text_line_done
+    mov eax,esi
+    cmp ebx,edi
+    jae text_line_done
     cmp eax,fileSize
     jae text_line_done
     call NextTextRow
-    dec ecx
+    mov esi,eax
+    inc ebx
+    test bl,31
+    jnz text_line_next
+    call CacheTextRow
     jmp text_line_next
 text_line_done:
+    call CacheTextRow
+    pop edi
+    pop esi
     pop edx
     pop ecx
+    pop ebx
+    pop ebp
     ret
 TextLineOffset endp
 
