@@ -23,8 +23,8 @@ Persistent user requirements:
   HEX/BIN editing (including the dot for a non-printable byte); in ASCII
   editing the selected character/EOF marker is purple. Hex/binary selection
   remains purple in the data column.
-  The filename and Save As input are purple; the bottom status line and
-  Save As/unsaved-quit prompts are light gray.
+  The filename and Save input are purple; the bottom status line and
+  Save/unsaved-quit prompts are light gray.
 - F1 help uses a centred, bordered modal text window with one instruction
   per line, bright-yellow key names, and light-gray descriptions/EOF note.
   The any-key return description stays dark green.
@@ -45,8 +45,13 @@ Persistent user requirements:
   keep the dialog open without navigation/data changes.
 - F9 opens search in every mode; Tab inside the dialog selects exact TEXT/HEX,
   Enter searches, empty Enter repeats, Backspace corrects and Esc cancels.
-  F3 finds the next occurrence. Patterns are case-sensitive ASCII or hex byte
-  pairs, up to 32 bytes. Forward search wraps once and never modifies file data.
+  F3 finds next and F4 finds previous. Patterns are case-sensitive ASCII or hex
+  byte pairs, up to 32 bytes. Both search directions wrap once without edits.
+- F2 is the universal Save/Save As action: it prefills the active path; Enter
+  saves it, typing replaces the selected name, and arrows/Home/End enable
+  in-place filename editing. Esc cancels. Only successful saves change the
+  active filename/savepoint. The quit prompt's S uses this same dialog; cancel
+  or failure returns to the editor. F4 is exclusively Find Previous.
 - F11 undoes and F12 redoes up to 32 retained editing changes in RAM. CR/LF
   insertion/Text line joins are single changes; individual hex digits/binary
   bits are separate changes. No-ops/navigation do not consume history. New
@@ -72,8 +77,9 @@ Persistent user requirements:
 | `TESTS\HOSTTEST.PY` | Isolated negative freshness/link-result checks |
 | `TESTS\SAVEFAIL.INC` | Test-only DOS save-failure interception and recovery checks |
 | `TESTS\GOTO.INC` | F8 parser/input/range/navigation/colour regression checks |
-| `TESTS\SEARCH.INC` | F9/F3 parsing, search, repeat/wrap, bounds and UI checks |
+| `TESTS\SEARCH.INC` | F9/F3/F4 parsing, bidirectional search/wrap, bounds and UI checks |
 | `TESTS\UNDO.INC` | Undo/redo grouping, eviction, branching, saves, bounds and stack tests |
+| `TESTS\SAVEUI.INC` | Universal Save prefill/edit/cancel/name/savepoint and video checks |
 | `BUILD\MENUKEY.ASM` | Preserved working resident launcher-test key feeder |
 | `BUILD\MENUEXEC.ASM` | Preserved earlier child-COMMAND.COM debugging attempt |
 | `BUILD\MENU.IN` | Preserved stdin-redirection experiment input |
@@ -119,11 +125,15 @@ find next`), including search/help, README/memory, SEARCH.INC, core/release
 regressions and rebuilt artifacts.
 The bright-red mirrored ASCII selection was committed and pushed as `ee0632d`
 (`feat(ui): highlight selected ASCII preview in hex and binary modes`).
-The user subsequently requested committing/pushing undo/redo as
-`feat(editor): add 32-level undo and redo on F11 and F12`, from baseline ee0632d
-on master -> origin/master. The changeset includes production/test UNDO.INC,
-enhanced keyboard dispatch, savepoints, help/docs/memory, freshness coverage
-and tracked rebuilt artifacts.
+Undo/redo was committed and pushed as `ef34626` (`feat(editor): add 32-level
+undo and redo on F11 and F12`), including production/test UNDO.INC, enhanced
+keyboard dispatch, savepoints, help/docs/memory and freshness coverage.
+The user subsequently requested committing/pushing universal Save and previous
+search as `feat(editor): unify F2 save and add F4 find previous`, from baseline
+ef34626 on master -> origin/master. This packages implementation/help, README/
+memory, SAVEUI.INC/core/release/search regressions and tracked rebuilt artifacts.
+Untracked TEXT3.COM was present at packaging and is preserved as separate user
+work outside this feature commit.
 
 ## Architecture and invariants
 
@@ -249,6 +259,19 @@ and tracked rebuilt artifacts.
   target to a unique backup, then installs the new file. Failed installation
   attempts restoration. This is not power-loss-atomic. Successful replacement
   gives the file a new timestamp and normal attributes.
+- F2/quit-save call SaveDialog, which separates ResetSaveInput, HandleSaveKey,
+  RenderSaveDialog and ApplySavePath. inputPath is prefilled and initially
+  replace-on-type; Backspace/Delete clear that selection, navigation clears
+  selection for ordinary insertion/deletion at saveInputCursor. saveInputView
+  keeps a 78-cell field/caret in bounds. Input is limited to 127 chars; an
+  attempted overflow blocks saving until corrected, and empty names stay in
+  the dialog. ApplySavePath uses staged SaveDocument then copies the new name
+  only after success. saveInputDone: 0 editing, 1 saved, 2 cancelled, 3 DOS
+  failure. SaveDialog shows the existing error modal on failure and returns CF
+  set for failure/cancel, so QuitDialog cannot exit without a successful save.
+  Input/navigation do not consume undo history; successful saves retain redo
+  and update only the saved history marker. Choosing a new path retains the
+  old file, as Save As did.
 - Search uses separate F9 draft/candidate/committed pattern buffers, so invalid
   input and Esc never replace the previous pattern. `ResetSearchInput` defaults
   to HEX in numeric focus and TEXT in ASCII/Text, then remembers accepted type.
@@ -262,6 +285,12 @@ and tracked rebuilt artifacts.
   `RunSearch` navigates only on success and preserves editing mode/focus/data/
   dirty state; a miss changes only search history/status. New queries start at
   cursorOffset; RepeatSearch (F3 or empty Enter) starts after the current match.
+  RepeatPreviousSearch (F4) starts before its raw match anchor. Shared
+  SearchSegment supports first/last match selection and resets KMP state to a
+  proper prefix after a remembered match, preserving overlaps. Backward search
+  finds the final matching candidate in the bounded prefix, then the suffix
+  on wrap; each range remains linear and never crosses physical EOF. Direction
+  switching preserves the pattern, mode/focus, dirty state and undo history.
   Raw `searchLastMatch` and normalized `searchCursorAtMatch` keep LF searches
   progressing in Text mode. Byte writes/deletions and loads invalidate that
   match anchor. RenderSearchDialog uses rows 23/24, gray prompt/errors, purple
@@ -278,10 +307,10 @@ The `ATTR_*` constants near the top of `BINED3.ASM` define VGA text attributes:
 | `ATTR_NORMAL` | `0Ah` | Bright-green hex/binary/Text data and default screen/help fill |
 | `ATTR_TITLE` | `02h` | Dark-green F1 any-key return description |
 | `ATTR_OFFSET` | `02h` | Dark-green row offsets |
-| `ATTR_SELECTED` | `0Dh` | Purple selected byte/EOF, filename, Save As input, help border/title |
+| `ATTR_SELECTED` | `0Dh` | Purple selected byte/EOF, filename, Save input, help border/title |
 | `ATTR_STATUS` | `0Ah` | Bright-green Offset/Size/Capacity labels |
 | `ATTR_VALUE` | `05h` | Dark-purple Offset/Size/Capacity and Text HEX/BIN values |
-| `ATTR_FOOTER` | `07h` | Light-gray bottom status line and Save As/unsaved-quit prompts/fill |
+| `ATTR_FOOTER` | `07h` | Light-gray bottom status line and Save/unsaved-quit prompts/fill |
 | `ATTR_HELP_KEY` | `0Eh` | Bright-yellow key names in F1 help |
 | `ATTR_HEADING` | `0Fh` | Bright-white editor title |
 | `ATTR_COLUMN` | `0Ch` | Bright-red OFFSET/DATA/ASCII column labels |
@@ -298,7 +327,7 @@ ASCII editing uses purple ATTR_SELECTED instead. Numeric data selection and
 Text-mode colours keep their existing palette. Numeric EOF has no ASCII byte
 preview; moving there clears the previous red preview highlight.
 The current source also uses `ATTR_FOOTER` to fill rows 23/24 in
-`DialogPrompt` and row 24 during Save As input; prompt text inherits that
+`DialogPrompt` and row 24 during Save input; prompt text inherits that
 attribute, while the typed path uses `ATTR_SELECTED`.
 
 ### F1 help window
@@ -338,10 +367,10 @@ call TESTS\TEST.BAT
 
 With no filename the editor opens/creates `UNTITLED.BIN`; missing files start
 empty. One quoted filename is accepted, subject to DOS-visible/8.3 paths.
-F1 help, F2 save, F4 save-as, F5 binary, F6 hex, F7 Text; Tab toggles numeric/
+F1 help, F2 universal save (prefilled editable path), F5 binary, F6 hex, F7 Text; Tab toggles numeric/
 right-column ASCII in HEX/BIN or inserts a tab byte in Text. F8 goes to an
 absolute hexadecimal offset. Esc quits.
-F9 searches text/hex; F3 repeats the last search with forward wrap-around.
+F9 searches text/hex; F3/F4 find next/previous with wrap-around.
 F11 undoes and F12 redoes the last retained edit (32 changes total in memory).
 
 Unattended build/test, followed by independent host verification:
@@ -372,7 +401,23 @@ with this bundled environment.
 
 ### Coverage and last verified results
 
-Latest verification: F11/F12 undo/redo (2026-11-14), fresh RUN.PY production/
+Latest verification: universal F2 / F3-F4 search (2026-11-14), fresh RUN.PY
+production/core/release/byte/hash checks and all six HOSTTEST cases passed.
+SAVEUI.INC covers current-name prefill/Enter, replacement and in-place editing,
+cancellation/no file creation, changed names retaining old files, empty/overflow
+bounds, failed-path/directory saves, filename/undo/savepoint retention, path
+scrolling, cursor/video bounds and colours. SEARCH.INC now checks backward
+wrap/overlaps, direction switching in all modes, empty/missing patterns, EOF/
+64-KiB matches, Text LF raw-anchor progress and linear work. KEYDRIVE uses only
+F2 for save/Save As, checks F4 never opens Save, and covers cancelled/successful
+quit-save dialogs. Temporary SAVE1.BIN/SAVE2.BIN are cleaned; all output bytes
+and original UI-path absence remain unchanged.
+For commit/push packaging, VERIFY.PY --fresh, all six HOSTTEST cases and the
+authored-file whitespace check were rerun successfully. Runtime DOS tests were
+not repeated for packaging; the preceding fresh universal-Save/search feature
+run remains the current production/core/release result.
+
+F11/F12 verification (2026-11-14): fresh RUN.PY production/
 core/release/byte/hash checks and all six HOSTTEST cases passed. TESTS/UNDO.INC
 covers HEX/BIN/ASCII edits, grouped Text CR/LF/Backspace/Delete/tab/zero edits,
 32-change eviction/all-level redo, no-op retention/new-edit branching, active

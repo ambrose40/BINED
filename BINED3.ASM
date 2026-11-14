@@ -105,6 +105,12 @@ renderColumn    dw 0
 renderValue     db 0
 renderAttr      db 0
 dialogLength    dw 0
+saveInputCursor dw 0
+saveInputView   dw 0
+saveInputSelected db 1             ; prefilled path is replaced by the first typed char
+saveInputDone   db 0               ; 0 editing, 1 saved, 2 cancelled, 3 DOS failure
+saveInputError  dw 0
+saveInputOverflow db 0
 gotoInput       db 10 dup (0)       ; nine visible chars + terminator, parsed as <=8
 gotoLength      dw 0
 gotoDone        db 0               ; 0 = editing, 1 = accepted, 2 = cancelled
@@ -125,6 +131,10 @@ searchWrapped   db 0
 searchHaveMatch db 0
 searchLastMatch dd 0               ; raw byte position, before Text CR/LF normalization
 searchCursorAtMatch dd 0
+searchBackward  db 0
+searchTakeLast  db 0
+searchSegmentFound db 0
+searchLastCandidate dd 0
 textCursorRow   dw 0
 textCursorCol   dw 0
 textAbsoluteLine dd 0
@@ -178,8 +188,8 @@ helpText7       db 'ASCII/Text: overwrite/insert; typing at EOF appends.',0
 helpText8       db 'F11 / F12: undo / redo (32 changes).',0
 helpText9       db 'Space: next byte in numeric; text in ASCII/Text.',0
 helpText10      db 'Backspace: previous byte; deletes in Text.',0
-helpText11      db 'F2 / F4: save / save the file under a new name.',0
-helpText12      db 'F9 / F3: search (Tab TEXT/HEX) / next, wraps.',0
+helpText11      db 'F2: save (Enter same name; type a new name).',0
+helpText12      db 'F9 / F3 / F4: search / next / previous (wraps).',0
 helpText13      db 'F5 / F6: switch to binary / hex digit editing.',0
 helpText14      db 'F7: full-screen Text editing (Enter inserts CR/LF).',0
 helpText15      db 'F8: go to a hex file offset (EOF allowed).',0
@@ -192,7 +202,9 @@ helpLines       dw offset helpText1, offset helpText2, offset helpText3
                 dw offset helpText13, offset helpText14, offset helpText15
                 dw offset helpText16, offset helpText17, 0
 helpReturn      db 'Any key: return to the editor.',0
-saveAsText      db 'Save as (Esc cancels, Enter accepts):',0
+savePromptText  db 'Save: Enter keeps name; typing replaces it; Esc cancels.',0
+saveEmptyText   db 'Enter a filename, or press Esc to cancel.',0
+saveLongText    db 'Filename too long (127 chars). Backspace/Delete corrects it.',0
 gotoPrompt      db 'Go to offset (HEX, 0..EOF; Enter accepts, Esc cancels):',0
 gotoInvalid     db 'Enter 1-8 hex digits (0-9, A-F). Backspace corrects; Esc cancels.',0
 gotoRange       db 'Offset is beyond EOF. Correct it or press Esc to cancel.',0
@@ -206,8 +218,8 @@ searchNoPrevious db 'No previous search. Enter a pattern first.',0
 searchModeLabel db 'Mode: ',0
 searchTextLabel db 'TEXT',0
 searchHexLabel  db 'HEX',0
-msgSearchFound  db 'Match found. F3 finds the next match.',0
-msgSearchWrapped db 'Match found (wrapped). F3 finds the next match.',0
+msgSearchFound  db 'Match found. F3 next / F4 previous.',0
+msgSearchWrapped db 'Match found (wrapped). F3 next / F4 previous.',0
 msgSearchMissing db 'Search pattern not found.',0
 msgUndone       db 'Undone. F12 redoes the change.',0
 msgRedone       db 'Redone. F11 undoes the change.',0
@@ -1689,6 +1701,7 @@ CommitSearchPattern endp
 SearchSegment proc
     mov esi,eax
     xor bx,bx
+    mov searchSegmentFound,0
 search_segment_next:
     cmp esi,edx
     jae search_segment_absent
@@ -1714,12 +1727,27 @@ search_segment_match:
     lea eax,[esi+1]
     movzx ecx,searchLength
     sub eax,ecx
+    cmp searchTakeLast,0
+    jne search_segment_remember
     clc
     ret
+search_segment_remember:
+    mov searchLastCandidate,eax
+    mov searchSegmentFound,1
+    mov bp,bx
+    dec bp
+    shl bp,1
+    mov bx,ds:searchPrefix[bp]      ; keep overlapping matches when finding the last
 search_segment_advance:
     inc esi
     jmp search_segment_next
 search_segment_absent:
+    cmp searchSegmentFound,0
+    je search_segment_missing
+    mov eax,searchLastCandidate
+    clc
+    ret
+search_segment_missing:
     stc
     ret
 SearchSegment endp
@@ -1727,6 +1755,7 @@ SearchSegment endp
 ; EAX first candidate offset. Search to EOF, then earlier candidates once.
 ; A match can cross the starting offset or 64 KiB, but never physical EOF.
 FindSearchPattern proc
+    mov searchTakeLast,0
     mov searchStart,eax
     mov searchWrapped,0
     movzx edx,searchLength
@@ -1762,10 +1791,59 @@ search_pattern_absent:
     ret
 FindSearchPattern endp
 
+SearchSegmentLast proc
+    mov searchTakeLast,1
+    call SearchSegment
+    mov searchTakeLast,0           ; MOV preserves the returned carry flag
+    ret
+SearchSegmentLast endp
+
+; EAX exclusive upper candidate offset: nearest earlier match, then wrap from EOF.
+; KMP scans each bounded range once and remembers the final matching start.
+FindPreviousPattern proc
+    mov searchStart,eax
+    mov searchWrapped,0
+    movzx ecx,searchLength
+    jecxz previous_pattern_absent
+    cmp ecx,fileSize
+    ja previous_pattern_absent
+    test eax,eax
+    jz previous_pattern_wrap
+    lea edx,[eax+ecx-1]
+    cmp edx,fileSize
+    jbe previous_pattern_prefix
+    mov edx,fileSize
+previous_pattern_prefix:
+    xor eax,eax
+    call SearchSegmentLast
+    jnc previous_pattern_return
+previous_pattern_wrap:
+    mov eax,searchStart
+    mov edx,fileSize
+    movzx ecx,searchLength
+    sub edx,ecx
+    cmp eax,edx
+    ja previous_pattern_absent
+    mov edx,fileSize
+    mov searchWrapped,1
+    call SearchSegmentLast
+previous_pattern_return:
+    ret
+previous_pattern_absent:
+    stc
+    ret
+FindPreviousPattern endp
+
 ; Search and navigate only on success. A miss never changes position/selection.
 RunSearch proc
     mov searchHaveMatch,0
+    cmp searchBackward,0
+    jne search_run_previous
     call FindSearchPattern
+    jmp search_run_result
+search_run_previous:
+    call FindPreviousPattern
+search_run_result:
     jc search_run_missing
     mov searchLastMatch,eax
     mov digitIndex,0
@@ -1793,23 +1871,41 @@ search_run_missing:
     ret
 RunSearch endp
 
+SearchAnchor proc
+    mov eax,cursorOffset
+    cmp searchHaveMatch,0
+    je search_anchor_ready
+    cmp eax,searchCursorAtMatch
+    jne search_anchor_ready
+    mov eax,searchLastMatch        ; do not rediscover a Text-normalized LF forever
+search_anchor_ready:
+    ret
+SearchAnchor endp
+
 RepeatSearch proc
     cmp searchLength,0
     je search_repeat_empty
-    mov eax,cursorOffset
-    cmp searchHaveMatch,0
-    je search_repeat_start
-    cmp eax,searchCursorAtMatch
-    jne search_repeat_start
-    mov eax,searchLastMatch        ; do not rediscover a Text-normalized LF forever
-search_repeat_start:
+    call SearchAnchor
     inc eax
+    mov searchBackward,0
     jmp RunSearch
 search_repeat_empty:
     mov statusText,offset searchNoPrevious
     stc
     ret
 RepeatSearch endp
+
+RepeatPreviousSearch proc
+    cmp searchLength,0
+    jne search_previous_ready
+    mov statusText,offset searchNoPrevious
+    stc
+    ret
+search_previous_ready:
+    call SearchAnchor
+    mov searchBackward,1
+    jmp RunSearch
+RepeatPreviousSearch endp
 
 AcceptSearch proc
     cmp searchInputLength,0
@@ -1824,6 +1920,7 @@ search_accept_new:
     jc search_accept_done
     call CommitSearchPattern
     mov eax,cursorOffset          ; a new search includes the selected byte
+    mov searchBackward,0
     call RunSearch
 search_accept_done:
     ret
@@ -2093,7 +2190,7 @@ key_extended:
     cmp ah,3Dh
     je key_search_next
     cmp ah,3Eh
-    je key_save_as
+    je key_search_previous
     cmp ah,3Fh
     je key_binary
     cmp ah,40h
@@ -2301,14 +2398,10 @@ key_delete:
     call DeleteByte
     ret
 key_save:
-    mov dx,offset fileName
-    call SaveDocument
-    jnc key_save_done
-    call SaveErrorDialog
-key_save_done:
+    call SaveDialog
     ret
-key_save_as:
-    call SaveAsDialog
+key_search_previous:
+    call RepeatPreviousSearch
     ret
 key_help:
     call HelpDialog
@@ -3254,90 +3347,257 @@ search_dialog_next:
     ret
 SearchDialog endp
 
-SaveAsDialog proc
-    mov dialogLength,0
+ResetSaveInput proc
+    mov si,offset fileName
+    mov di,offset inputPath
+    xor bx,bx
+save_prefill_next:
+    cmp bx,PATH_BYTES-1
+    jae save_prefill_done
+    lodsb
+    test al,al
+    jz save_prefill_done
+    mov [di],al
+    inc di
+    inc bx
+    jmp save_prefill_next
+save_prefill_done:
+    mov byte ptr [di],0
+    mov dialogLength,bx
+    mov saveInputCursor,bx
+    mov saveInputView,0
+    mov saveInputSelected,1
+    mov saveInputDone,0
+    mov saveInputError,0
+    mov saveInputOverflow,0
+    ret
+ResetSaveInput endp
+
+ClearSaveInput proc
     mov inputPath,0
-    mov si,offset saveAsText
+    mov dialogLength,0
+    mov saveInputCursor,0
+    mov saveInputView,0
+    mov saveInputSelected,0
+    mov saveInputError,0
+    mov saveInputOverflow,0
+    ret
+ClearSaveInput endp
+
+; The active filename/savepoint changes only after a successful staged save.
+ApplySavePath proc
+    cmp saveInputOverflow,0
+    jne save_path_too_long
+    cmp dialogLength,PATH_BYTES-1
+    ja save_path_too_long
+    cmp dialogLength,0
+    je save_path_empty
+    mov dx,offset inputPath
+    call SaveDocument
+    jc save_path_failed
+    mov si,offset inputPath
+    mov di,offset fileName
+save_path_copy:
+    lodsb
+    mov [di],al
+    inc di
+    test al,al
+    jnz save_path_copy
+    mov saveInputDone,1
+    mov saveInputError,0
+    clc
+    ret
+save_path_failed:
+    mov saveInputDone,3
+    stc
+    ret
+save_path_empty:
+    mov saveInputError,offset saveEmptyText
+    stc
+    ret
+save_path_too_long:
+    mov saveInputError,offset saveLongText
+    stc
+    ret
+ApplySavePath endp
+
+HandleSaveKey proc
+    cmp al,27
+    je save_key_cancel
+    cmp al,13
+    je ApplySavePath
+    cmp al,8
+    je save_key_backspace
+    cmp al,0
+    je save_key_extended
+    cmp al,0E0h
+    je save_key_extended
+    cmp al,20h
+    jb save_key_done
+    cmp al,7Eh
+    ja save_key_done
+    cmp al,'"'
+    je save_key_done
+    push ax
+    cmp saveInputSelected,0
+    je save_key_insert_ready
+    call ClearSaveInput
+save_key_insert_ready:
+    pop ax
+    cmp dialogLength,PATH_BYTES-1
+    jae save_key_overflow
+    mov dl,al
+    mov si,dialogLength
+save_key_shift_right:
+    mov al,inputPath[si]
+    mov inputPath[si+1],al          ; includes the terminator, at most inputPath[127]
+    cmp si,saveInputCursor
+    jbe save_key_store
+    dec si
+    jmp save_key_shift_right
+save_key_store:
+    mov bx,saveInputCursor
+    mov inputPath[bx],dl
+    inc dialogLength
+    inc saveInputCursor
+    mov saveInputError,0
+    mov saveInputOverflow,0
+save_key_done:
+    ret
+save_key_overflow:
+    mov saveInputOverflow,1
+    mov saveInputError,offset saveLongText
+    ret
+save_key_cancel:
+    mov saveInputDone,2
+    ret
+save_key_extended:
+    cmp ah,47h
+    je save_key_home
+    cmp ah,4Fh
+    je save_key_end
+    cmp ah,4Bh
+    je save_key_left
+    cmp ah,4Dh
+    je save_key_right
+    cmp ah,53h
+    je save_key_delete
+    ret
+save_key_home:
+    mov saveInputSelected,0
+    mov saveInputCursor,0
+    mov saveInputError,0
+    ret
+save_key_end:
+    mov saveInputSelected,0
+    mov ax,dialogLength
+    mov saveInputCursor,ax
+    mov saveInputError,0
+    ret
+save_key_left:
+    cmp saveInputSelected,0
+    jne save_key_home
+    cmp saveInputCursor,0
+    je save_key_done
+    dec saveInputCursor
+    mov saveInputError,0
+    ret
+save_key_right:
+    cmp saveInputSelected,0
+    jne save_key_end
+    mov ax,saveInputCursor
+    cmp ax,dialogLength
+    jae save_key_done
+    inc saveInputCursor
+    mov saveInputError,0
+    ret
+save_key_backspace:
+    cmp saveInputSelected,0
+    jne ClearSaveInput
+    cmp saveInputCursor,0
+    je save_key_done
+    dec saveInputCursor
+    jmp save_key_delete_at
+save_key_delete:
+    cmp saveInputSelected,0
+    jne ClearSaveInput
+save_key_delete_at:
+    mov si,saveInputCursor
+    cmp si,dialogLength
+    jae save_key_done
+save_key_shift_left:
+    mov al,inputPath[si+1]
+    mov inputPath[si],al
+    inc si
+    cmp si,dialogLength
+    jb save_key_shift_left
+    dec dialogLength
+    mov saveInputError,0
+    mov saveInputOverflow,0
+    ret
+HandleSaveKey endp
+
+RenderSaveDialog proc
+    mov si,offset savePromptText
+    cmp saveInputError,0
+    je save_prompt_ready
+    mov si,saveInputError
+save_prompt_ready:
     call DialogPrompt
-save_as_redraw:
     push es
     mov ax,0B800h
     mov es,ax
-    mov di,24 * 160
-    mov ax,ATTR_FOOTER * 256 + ' '
-    mov cx,80
-    rep stosw
-    mov di,24 * 160
+    mov ax,saveInputCursor
+    cmp ax,saveInputView
+    jae save_view_right
+    mov saveInputView,ax
+save_view_right:
+    mov bx,saveInputView
+    add bx,77
+    cmp ax,bx
+    jbe save_view_ready
+    sub ax,77
+    mov saveInputView,ax
+save_view_ready:
     mov si,offset inputPath
-    mov bx,dialogLength
-    cmp bx,78
-    jbe save_as_visible
-    sub bx,78
-    add si,bx
-save_as_visible:
+    add si,saveInputView
+    mov di,24*160
+    mov cx,78
     mov ah,ATTR_SELECTED
-    call PutString
+    call PutLimitedString
     pop es
+    mov ax,saveInputCursor
+    sub ax,saveInputView
     mov dx,1800h
-    mov ax,dialogLength
-    cmp ax,78
-    jbe save_as_cursor
-    mov ax,78
-save_as_cursor:
     mov dl,al
     xor bh,bh
     mov ah,02h
     int 10h
+    ret
+RenderSaveDialog endp
+
+; CF clear only when saved; Esc and DOS failures never imply save-and-quit success.
+SaveDialog proc
+    call ResetSaveInput
+save_dialog_next:
+    call RenderSaveDialog
     xor ah,ah
     int 16h
-    cmp al,27
-    je save_as_done
-    cmp al,13
-    je save_as_accept
-    cmp al,8
-    je save_as_backspace
-    cmp al,32
-    jb save_as_redraw
-    cmp al,127
-    jae save_as_redraw
-    cmp al,'"'
-    je save_as_redraw
-    mov bx,dialogLength
-    cmp bx,PATH_BYTES - 1
-    jae save_as_redraw
-    mov inputPath[bx],al
-    inc bx
-    mov inputPath[bx],0
-    mov dialogLength,bx
-    jmp save_as_redraw
-save_as_backspace:
-    mov bx,dialogLength
-    or bx,bx
-    jz save_as_redraw
-    dec bx
-    mov inputPath[bx],0
-    mov dialogLength,bx
-    jmp save_as_redraw
-save_as_accept:
-    cmp dialogLength,0
-    je save_as_done
-    mov dx,offset inputPath
-    call SaveDocument
-    jnc save_as_saved
+    call HandleSaveKey
+    cmp saveInputDone,0
+    je save_dialog_next
+    cmp saveInputDone,1
+    je save_dialog_success
+    cmp saveInputDone,3
+    jne save_dialog_cancel
     call SaveErrorDialog
-    jmp save_as_done
-save_as_saved:
-    mov si,offset inputPath
-    mov di,offset fileName
-save_as_copy:
-    lodsb
-    mov [di],al
-    inc di
-    or al,al
-    jnz save_as_copy
-save_as_done:
+save_dialog_cancel:
+    stc
     ret
-SaveAsDialog endp
+save_dialog_success:
+    clc
+    ret
+SaveDialog endp
 
 QuitDialog proc
     cmp dirty,0
@@ -3354,10 +3614,8 @@ quit_wait:
     je quit_accept
     cmp al,'s'
     jne quit_wait
-    mov dx,offset fileName
-    call SaveDocument
+    call SaveDialog
     jnc quit_accept
-    call SaveErrorDialog
     jmp quit_cancel
 quit_accept:
     mov quitRequested,1

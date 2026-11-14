@@ -110,17 +110,19 @@ fcb2Segment     dw 0
 commandTail     db tailEnd - tailText
 tailText        db ' BUILD\TESTDATA\UI.BIN'
 tailEnd         db 13
-passedText      db 'PASS: release EXE editing, F8/F9/F3, errors, help and save.',13,10,'$'
+passedText      db 'PASS: release EXE editing, F3/F4 search, universal F2 and undo.',13,10,'$'
 failedText      db 'FAIL: release EXE integration test.',13,10,'$'
 keys:
     dw 8500h,8600h               ; F11/F12 safely report empty history
-    dw 3D00h,4300h,13,27         ; F3 without a pattern; empty F9 error and cancel
+    dw 3D00h,3E00h,4300h,13,27  ; next/previous without a pattern; F9 error/cancel
     dw 4200h,'0',13               ; F8 accepts zero in an empty document
     dw 3B00h,0078h                ; F1, x: help and dismissal
     dw 0034h,0031h,0034h,0032h   ; hex 41 42
     dw 8500h,8600h              ; undo/redo a hex digit through the release event loop
     dw 4300h,'4','2',13,'4','2'  ; F9 hex finds B; rewrite the same byte
     dw 3D00h,'4','2'             ; F3 wraps and finds that byte again
+    dw 3E00h,'4','2'             ; F4 finds the previous B, without a save dialog
+    dw 4200h,'0',13,3E00h,'4','2' ; previous wraps from file start
     dw 3F00h,7700h               ; binary, Ctrl-Home
     dw 0030h,0031h,0030h,0030h   ; first byte -> 01000011 (43)
     dw 0030h,0030h,0031h,0031h
@@ -128,7 +130,7 @@ keys:
     dw 4000h,7500h,5200h         ; hex, Ctrl-End, insert zero at EOF
     dw 0034h,0034h               ; overwrite it with 44
     dw 7700h,5300h               ; Ctrl-Home, delete: 42 44
-    dw 3E00h                     ; F4 Save as
+    dw 3C00h                     ; F2 prefilled name; typing replaces it (Save As)
     dw 'B','U','I','L','D','\','T','E','S','T','D','A','T','A','\'
     dw 'U','I','2','.','B','I','N',13
     dw 003Fh                     ; invalid hex character: ignored
@@ -158,15 +160,18 @@ keys:
     dw 4300h,9,'0','9',13,5300h,9 ; hex search finds tab; replace with an actual tab
     dw 4300h,9,'X','Y','Z',27    ; cancellation retains the saved 09 query
     dw 3D00h,5300h,9             ; repeat that query and replace the tab again
+    dw 3E00h,5300h,9             ; previous tab match, preserving Text insertion
     dw 4200h,'1','0',13,'X',8    ; Text goto byte 10h, insert then delete X
     dw 4700h,4D00h,5300h,'O',4F00h ; Home, Right past tab, replace O, End
     dw 3B00h,'x'                ; modal help in full Text view
     dw 4000h,3F00h,4100h        ; F6 HEX, F5 BIN, F7 Text; no conversion
-    dw 3E00h                    ; failed Save As opens a dismissible error modal
+    dw 3C00h                    ; failed renamed F2 save opens the error modal
     dw 'B','U','I','L','D','\','N','O','_','S','U','C','H','\'
     dw 'B','A','D','.','B','I','N',13,'x'
-    dw 3C00h,8500h,8600h,'X',8  ; savepoint, undo/redo, then a new edit/deletion
-    dw 011Bh,'s'                 ; Esc, save-and-quit
+    dw 3C00h,13,8500h,8600h,'X',8 ; Enter saves same path, then undo/redo and edit
+    dw 011Bh,'s',27             ; cancelling the universal save cancels quit
+    dw 3C00h,13,'X',8           ; save same path, then become dirty again
+    dw 011Bh,'s',13             ; save-and-quit uses the same prefilled dialog
 keysEnd:
     db 512 dup (?)
 stackEnd:

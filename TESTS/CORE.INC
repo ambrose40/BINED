@@ -974,6 +974,8 @@ test_dispatch_loop:
     jne TestFailed
     cmp word ptr es:[15*160+14*2],0E39h ; yellow F9 search key
     jne TestFailed
+    cmp word ptr es:[15*160+24*2],0E34h ; yellow F4 Find Previous key
+    jne TestFailed
     cmp word ptr es:[17*160+14*2],0E37h ; yellow F7 mode key
     jne TestFailed
     cmp word ptr es:[18*160+14*2],0E38h ; yellow F8 Go to offset key
@@ -1208,6 +1210,8 @@ test_full_row_video_fill:
     jc TestFailed
     call TestSearchVideo
     jc TestFailed
+    call TestSaveDialogVideo
+    jc TestFailed
     call EndVideo
     mov videoActive,0
     call TestSaveFailures
@@ -1217,6 +1221,8 @@ test_full_row_video_fill:
     call TestSearch
     jc TestFailed
     call TestUndoRedo
+    jc TestFailed
+    call TestUniversalSave
     jc TestFailed
 
     mov testCase,offset caseFiles
@@ -1433,3 +1439,4 @@ include TESTS\POLISH.INC
 include TESTS\GOTO.INC
 include TESTS\SEARCH.INC
 include TESTS\UNDO.INC
+include TESTS\SAVEUI.INC

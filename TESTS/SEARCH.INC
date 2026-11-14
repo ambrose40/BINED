@@ -74,6 +74,8 @@ TestSearch proc
     jne search_test_bad
     call RepeatSearch
     jnc search_test_bad
+    call RepeatPreviousSearch
+    jnc search_test_bad
     cmp cursorOffset,0
     jne search_test_bad
     mov al,3
@@ -147,6 +149,20 @@ search_test_selected:
     cmp cursorOffset,0
     jne search_test_bad
     cmp statusText,offset msgSearchWrapped
+    jne search_test_bad
+    call RepeatPreviousSearch      ; backward wrap from first match -> final match
+    jc search_test_bad
+    cmp cursorOffset,7
+    jne search_test_bad
+    cmp statusText,offset msgSearchWrapped
+    jne search_test_bad
+    call RepeatPreviousSearch
+    jc search_test_bad
+    cmp cursorOffset,0
+    jne search_test_bad
+    call RepeatSearch             ; switching directions retains the same pattern
+    call RepeatSearch
+    cmp cursorOffset,0
     jne search_test_bad
     mov al,searchTestFocus
     cmp editMode,al
@@ -277,6 +293,12 @@ search_test_selected:
     call RepeatSearch
     cmp cursorOffset,0
     jne search_test_bad
+    call RepeatPreviousSearch
+    cmp cursorOffset,1
+    jne search_test_bad
+    call RepeatPreviousSearch
+    cmp cursorOffset,0
+    jne search_test_bad
     mov fileSize,2
     mov eax,1
     mov dl,'B'
@@ -291,6 +313,7 @@ search_test_selected:
     mov fileSize,0                 ; pattern longer than file cannot read any byte
     mov searchReadCount,0
     call RepeatSearch
+    call RepeatPreviousSearch
     cmp searchReadCount,0
     jne search_test_bad
     mov fileSize,20011h
@@ -318,6 +341,18 @@ search_fill_large:
     mov eax,fileSize
     cmp searchReadCount,eax
     ja search_test_bad
+    mov searchReadCount,0
+    call RepeatPreviousSearch
+    cmp statusText,offset msgSearchWrapped ; sole match wraps back to itself
+    jne search_test_bad
+    mov eax,fileSize
+    sub eax,32
+    cmp cursorOffset,eax
+    jne search_test_bad
+    mov eax,fileSize
+    add eax,32
+    cmp searchReadCount,eax
+    ja search_test_bad
     mov cursorOffset,0
     mov si,offset searchMaxHex       ; 95 input chars decode to exactly 32 bytes
     mov dl,1
@@ -342,6 +377,16 @@ search_fill_large:
     mov si,offset searchLongMiss
     xor dl,dl
     call AcceptSearchString
+    cmp statusText,offset msgSearchMissing
+    jne search_test_bad
+    cmp cursorOffset,10000h
+    jne search_test_bad
+    mov eax,fileSize
+    add eax,32
+    cmp searchReadCount,eax
+    ja search_test_bad
+    mov searchReadCount,0
+    call RepeatPreviousSearch
     cmp statusText,offset msgSearchMissing
     jne search_test_bad
     cmp cursorOffset,10000h
@@ -389,6 +434,14 @@ search_fill_large:
     sub eax,4
     cmp cursorOffset,eax
     jne search_test_bad
+    call RepeatPreviousSearch
+    cmp cursorOffset,0FFFFh
+    jne search_test_bad
+    call RepeatPreviousSearch
+    mov eax,fileSize
+    sub eax,4
+    cmp cursorOffset,eax
+    jne search_test_bad
     mov fileSize,7
     xor eax,eax
     mov dl,'A'
@@ -417,6 +470,16 @@ search_fill_large:
     mov si,offset searchLF
     mov dl,1
     call AcceptSearchString
+    cmp cursorOffset,1
+    jne search_test_bad
+    cmp searchLastMatch,2
+    jne search_test_bad
+    call RepeatPreviousSearch
+    cmp cursorOffset,4
+    jne search_test_bad
+    cmp searchLastMatch,5
+    jne search_test_bad
+    call RepeatPreviousSearch
     cmp cursorOffset,1
     jne search_test_bad
     cmp searchLastMatch,2

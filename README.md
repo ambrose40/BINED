@@ -60,8 +60,9 @@ quoting does not add Windows long-filename support to DOSBox.
 
 The editor loads an existing file automatically. A missing filename starts an
 empty document which is created on save. With no argument it opens
-`UNTITLED.BIN`, or starts that file empty if it does not exist. F4 chooses a
-different save path. `LAUNCH.BAT filename` also passes that filename to the editor.
+`UNTITLED.BIN`, or starts that file empty if it does not exist. F2 offers the
+current save path and lets you change it. `LAUNCH.BAT filename` also passes that
+filename to the editor.
 
 Use **Esc** to quit the editor. To reopen the launcher from the DOS prompt:
 
@@ -112,6 +113,7 @@ details.
 | F8 | Go to an absolute hexadecimal file offset |
 | F9 | Search for text or hexadecimal bytes |
 | F3 | Find the next occurrence of the last search pattern |
+| F4 | Find the previous occurrence of the last search pattern |
 | F11 / F12 | Undo / redo, up to 32 retained changes |
 | Enter in Text | Insert a DOS CR/LF line break (`0Dh 0Ah`) |
 | Left / Right | Previous / next hex digit, bit, or ASCII byte |
@@ -124,8 +126,7 @@ details.
 | Insert | Insert a zero byte before the cursor |
 | Delete | Remove the byte at the cursor; a CR/LF pair is deleted together in Text |
 | F1 | Open the centred help window; any key returns |
-| F2 | Save |
-| F4 | Save as; Enter accepts, Esc cancels |
+| F2 | Universal Save: Enter keeps the current name; replace/edit it to Save As; Esc cancels |
 | Esc | Quit; modified files prompt for Save, Discard, or Esc to cancel |
 
 The selected byte is highlighted. HEX view shows 16 bytes per row; BIN view
@@ -136,6 +137,24 @@ column and back, preserving its layout and viewport. The title shows
 Left/Right move one byte at a time in ASCII mode. Numeric/ASCII views show
 printable ASCII characters (`20h`–`7Eh`); other bytes appear as dots.
 Offsets, file size and buffer capacity are displayed in **hexadecimal**.
+
+### Saving with F2
+
+**F2** opens one Save dialog prefilled with the current filename. **Enter**
+saves to that path. Starting to type replaces the prefilled name, providing
+Save As in the same dialog; **Backspace/Delete** also clear the initial
+selection. To edit part of the existing path, first use **End**, **Home**, or
+an **arrow key**, then type or use Backspace/Delete. Long paths scroll with the
+cursor, with a maximum of 127 characters.
+
+**Esc** cancels without changing the active filename, document, modified flag,
+or undo history. Empty and overlength names remain in the dialog for correction.
+The active filename changes only after a successful save; choosing a different
+path saves there and retains the previous file. Failed saves display the error
+window and return to the editor with the old filename and savepoint intact.
+
+The unsaved-quit prompt's **S** action opens this same dialog. Accepting a valid
+save completes quitting; cancelling or failing the save returns to the editor.
 
 ### Go to offset
 
@@ -165,8 +184,9 @@ or Text mode; later dialogs remember the last accepted search type.
   bytes. Use HEX for tabs (`09`), CR/LF (`0D0A`), zeroes, and non-ASCII bytes.
 
 A new pattern searches from the selected byte through EOF, then wraps once to
-the beginning. **F3**, or **Enter on an empty F9 field**, repeats the previous
-search starting after the current match; overlapping matches are supported.
+the beginning. **F3**, or **Enter on an empty F9 field**, finds the next match;
+**F4** finds the previous match. Repeats start after/before the current match
+and wrap once at the relevant file boundary; overlapping matches are supported.
 The cursor selects the first matching byte and scrolls into view, preserving
 the current mode and ASCII-column focus. Status text reports a match, wrapping,
 or no match. Search does not modify bytes or the modified flag, and a miss
@@ -177,7 +197,7 @@ or entering invalid input preserves the previous query; a valid query is saved
 even when no match is found. Long HEX input scrolls horizontally within its
 field. The search scans actual file bytes (including across 64 KiB), never
 joining EOF to the beginning as if file data were circular. Text mode retains
-its shared CR/LF cursor cell while Find Next advances past the raw matched LF.
+its shared CR/LF cursor cell while next/previous use the raw matched LF offset.
 
 ### Full-screen Text editing
 
@@ -408,11 +428,14 @@ Text insert/newline/backspace stress check preserves SP over 4,000 key events.
 F8 checks cover strict 32-bit hexadecimal parsing, EOF/empty-file/range bounds,
 Backspace correction, cancellation, cross-64-KiB jumps, visibility and unchanged
 data/dirty state in every mode/focus, shared Text CR/LF cells, and prompt colours.
-F9/F3 checks cover case-sensitive text, compact/spaced/max-length HEX, zero/high
+F9/F3/F4 checks cover case-sensitive text, compact/spaced/max-length HEX, zero/high
 bytes, errors/correction/cancellation, overlapping and wrapped matches, misses,
 empty/short files, last-byte/64-KiB bounds, mode/focus and dirty-state retention,
 Text LF repeat progress, dialog colours/scrolling and linear scan work on
 repetitive 32-byte patterns. The engine uses a bounded KMP prefix table.
+Universal F2 checks cover prefilled/default and changed paths, cancellation,
+filename editing and scrolling, input bounds, failed saves, original-file
+retention, and unchanged undo history/savepoints until a successful save.
 Undo tests cover all editing forms, grouped CR/LF, 32-change eviction/full redo,
 redo branching and no-op retention, mode/cursor preservation, full-buffer
 rejection, cross-64-KiB edits, successful/failed saves and saved-state tracking,
@@ -426,9 +449,10 @@ direct DOS interrupts and no fault-injection code.
 BIOS keystrokes for help, numeric/right-column ASCII editing, F5/F6/F7 mode
 selection, Tab focus toggling, full-screen Text with CR/LF/tab insertion,
 F8 acceptance/error/cancellation and focus preservation,
-F9 text/hex search, F3 wrap/repeat, search errors and cancellation,
+F9 text/hex search, F3/F4 next/previous wrap, search errors and cancellation,
 F11/F12 undo/redo in numeric/ASCII/Text views and across saves,
-Backspace/Delete, navigation, save-as and save-and-quit. The final UI output is
+Backspace/Delete, navigation, F2 default/changed-path saving and cancelled/
+successful save-and-quit. The final UI output is
 `b"\xffz !? H\r\nText\r\n\tOK"`. `TEXT.BIN` independently round-trips
 `b"A\r\nB"` through production save/load procedures.
 `VERIFY.PY` independently checks the exact output bytes and

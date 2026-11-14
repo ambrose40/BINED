@@ -628,3 +628,51 @@ introduced on 2026-10-23.
   production/core/release undo/redo tests and additional 4,000-event stack check.
 - **Remaining:** Commit/push completion is reported in the final response.
   Existing DOSBox attribute-reporting limitation is unchanged.
+
+## 2026-11-14 — Universal F2 Save and F3/F4 next/previous search
+
+- **Request:** Combine F2/F4 save behavior into one universal F2 that offers the
+  current filename and permits changing it, freeing F4 for Find Previous.
+- **Changes:** Added prefilled, replace-on-type Save input with cursor/Home/End/
+  Backspace/Delete editing, bounded scrolling, explicit empty/overlength errors,
+  Esc cancellation and success-only filename updates. F2 and quit-save now use
+  SaveDialog; errors/cancellation never complete quitting. F4 exclusively finds
+  the previous saved search pattern, with wrap-around/overlaps using bounded
+  KMP last-match scans; F3/new F9 searches retain forward semantics. Updated F1
+  help/status hints, README, both memory files and rebuilt artifacts. Added
+  SAVEUI.INC, bidirectional SEARCH.INC checks and revised release keystrokes;
+  recorded published undo commit ef34626. Debugging sources retained.
+- **Verification:** `python TESTS/RUN.PY` passed fresh warning-/error-free DOS
+  production/core/release, exact bytes, cleanup, build logs and source/output
+  hashes. Core checked prefill/Enter, replace/edit/cancel, new/failed paths,
+  original-file retention, undo/savepoint invariants, input/video bounds and
+  colours. Backward search checks cover wrap, overlap, direction switches in
+  five modes/foci, EOF/64-KiB boundaries, empty/missing data, Text LF progress
+  and linear scan work. Release integration verified F2 default/changed-path
+  saves, F4 previous/wrap without a save dialog, actual save errors, cancelling
+  save-and-quit and then successfully saving/quitting via the same dialog.
+  All six HOSTTEST cases and authored-file whitespace checks passed; output
+  bytes remain unchanged and temporary save-dialog files were removed.
+- **Remaining:** None for this request. Existing DOSBox attribute-reporting
+  limitation remains; reduced-memory/launcher automation were not rerun. No
+  commit or push was requested for this changeset.
+
+## 2026-11-14 — Commit and push universal F2 and F4 Find Previous
+
+- **Request:** Commit implemented changes and push upstream.
+- **Changes:** Prepared `feat(editor): unify F2 save and add F4 find previous`
+  with prefilled editable Save/Save As, shared quit-save handling, backward
+  search, help/README, SAVEUI.INC/core/search/release regressions, both updated
+  memory files and tracked rebuilt artifacts. Reviewed and updated memory
+  before committing. Target: master -> origin/master in ambrose40/BINED,
+  starting at ef34626. Separate untracked TEXT3.COM is excluded and preserved.
+- **Verification:** Reviewed status, source/new regression include/tests/docs,
+  generated logs/maps/listing entries, recent history and branch/remote tracking.
+  `python TESTS/VERIFY.PY --fresh` passed exact outputs, cleanup, build logs and
+  source/output hashes; all six HOSTTEST cases passed. Authored-file whitespace
+  check passed. DOS runtime tests were not repeated for this packaging-only
+  task; the preceding feature entry records the fresh passing production/core/
+  release Save/previous-search/quit/undo tests.
+- **Remaining:** Commit/push completion is reported in the final response.
+  TEXT3.COM remains local user work; the known DOSBox attribute-reporting
+  limitation is unchanged.
