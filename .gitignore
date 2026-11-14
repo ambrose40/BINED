@@ -1,0 +1,5 @@
+# Host freshness markers are deliberately local to a completed run.
+/BUILD/BUILD.OK
+/BUILD/TEST.OK
+/BUILD/VERIFIED.JSON
+/TESTS/__pycache__/

@@ -396,3 +396,21 @@ introduced on 2026-10-23.
   label collision was corrected before the successful run.
 - **Remaining:** Steps 2 (fresh builds/save failures), 3 (Text layout cache),
   and 4 (navigation/viewport/status polish) follow as separate commits.
+
+## 2026-11-14 — Improvement 2: fresh builds and save-failure regression
+
+- **Request:** Complete the second improvement step and commit it separately
+  after verification and memory updates.
+- **Changes:** Added RUN.PY and gated ALL.BAT; build/test completion markers,
+  linker-result checks, and source/output SHA-256 provenance prevent stale
+  releases being mistaken for fresh results. Added five isolated HOSTTEST
+  rejection cases and narrow local-output ignores. Added SAVEFAIL.INC DOS
+  interception for failed/short writes, close failure, install failure with
+  rollback, and restore failure with retained recovery bytes. Release DISK_INT
+  expands directly to INT 21h. Updated README, both memory files and rebuilt
+  tracked artifacts; preserved all debugging sources.
+- **Verification:** `python TESTS/RUN.PY` rebuilt production/core/release with
+  warning-/error-free TASM, passed DOS save faults and existing regressions,
+  checked exact bytes/logs and fresh hashes. `python TESTS/HOSTTEST.PY` passed
+  all five negative cases. Authored-file whitespace check passed.
+- **Remaining:** Steps 3 and 4 follow. No push was requested.

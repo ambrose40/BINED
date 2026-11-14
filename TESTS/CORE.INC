@@ -1169,6 +1169,8 @@ test_full_row_video_fill:
     jne TestFailed
     call EndVideo
     mov videoActive,0
+    call TestSaveFailures
+    jc TestFailed
 
     mov testCase,offset caseFiles
     mov fileSize,20011h
@@ -1378,3 +1380,4 @@ test_verify_bad:
 TestVerifyPattern endp
 
 include TESTS\BOUNDS.INC
+include TESTS\SAVEFAIL.INC

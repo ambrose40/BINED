@@ -295,13 +295,18 @@ call TESTS\TEST.BAT
 Or run the build and tests unattended from PowerShell:
 
 ```powershell
-Start-Process -FilePath '.\DOSBOX\DOSBox.exe' -ArgumentList `
-  '-conf dosbox_bined.conf -noautoexec -c "mount c ." -c "c:" -c "call BUILD.BAT" -c "call TESTS\TEST.BAT" -c "exit"' -Wait
-python TESTS\VERIFY.PY
+python TESTS\RUN.PY
+python TESTS\HOSTTEST.PY
 ```
 
-`-Wait` ensures the DOSBox GUI process finishes before host verification reads
-the output files and logs.
+`RUN.PY` waits for DOSBox, removes only known workflow EXEs/logs/markers before
+building, gates tests on build success, checks all assembler/linker results,
+and creates local `BUILD/VERIFIED.JSON` source/output SHA-256 provenance.
+`python TESTS\VERIFY.PY --fresh` rechecks that manifest; source or output changes
+invalidate it. Plain `VERIFY.PY` checks existing artifacts without claiming a
+fresh build. `HOSTTEST.PY` checks rejection of stale source/EXE, linker failure,
+missing completion, and missing manifests in temporary workspaces. Manual DOS
+build/test commands remain supported; `BUILD.OK` and `TEST.OK` mark success.
 
 The tests generate artifacts only under `BUILD`. The procedure-level test
 EXE exercises command tails, EOF editing, ASCII focus in HEX and BIN views,
@@ -317,6 +322,10 @@ Text checks additionally cover CR/LF insertion/deletion across 64 KiB, an exact
 tabs and vertical navigation, full-width wrapping/EOF/empty-line scrolling,
 text/selection colours, and selected/typed HEX/BIN values. A separate 1,000-cycle
 Text insert/newline/backspace stress check preserves SP over 4,000 key events.
+Test-only DOS interception also exercises failed/short writes, close failure,
+install-rename rollback, and failed restoration. It verifies original/recovery
+bytes and dirty state, then removes recovery fixtures. Release code contains
+direct DOS interrupts and no fault-injection code.
 
 `KEYDRIVE.COM` separately runs the **release EXE** via DOS EXEC, supplying
 BIOS keystrokes for help, numeric/right-column ASCII editing, F5/F6/F7 mode

@@ -13,6 +13,15 @@
 P486                              ; TASM 2.5 spelling of the .486 directive
 DOSSEG
 
+; Test-only DOS fault interception; release instructions remain direct INT 21h.
+DISK_INT macro
+IFDEF BINED_TEST
+    call TestDiskInterrupt
+ELSE
+    int 21h
+ENDIF
+endm
+
 STACK_BYTES     equ 4096
 MAX_PARAGRAPHS  equ 8000h          ; 512 KiB, subject to conventional memory
 IO_CHUNK        equ 4000h          ; never cross a 64 KiB segment boundary
@@ -481,7 +490,7 @@ transfer_count_ready:
     push ds
     push fs
     pop ds
-    int 21h
+    DISK_INT
     pop ds
     jc transfer_failed
     cmp ax,ioCount
@@ -504,7 +513,7 @@ CloseFile proc
     mov bx,fileHandle
     mov fileHandle,0FFFFh
     mov ah,3Eh
-    int 21h
+    DISK_INT
     ret
 CloseFile endp
 
@@ -550,7 +559,7 @@ temp_terminate:
     mov byte ptr [di],0
     xor cx,cx
     mov ah,5Ah
-    int 21h
+    DISK_INT
     ret
 CreateSiblingTemp endp
 
@@ -563,7 +572,7 @@ SaveDocument proc
     mov stageExists,0
     mov backupExists,0
     mov ax,4300h
-    int 21h
+    DISK_INT
     jc save_check_missing
     test cx,11h                    ; read-only or directory
     jnz save_read_only
@@ -596,7 +605,7 @@ save_create_stage:
     jc save_cleanup_error
     mov dx,offset backupPath
     mov ah,41h
-    int 21h
+    DISK_INT
     jc save_cleanup_error
     mov dx,saveTarget
     mov di,offset backupPath
@@ -617,7 +626,7 @@ save_install:
     je save_success
     mov dx,offset backupPath
     mov ah,41h
-    int 21h                        ; deletion failure leaves a harmless backup
+    DISK_INT                       ; deletion failure leaves a harmless backup
 save_success:
     mov dirty,0
     mov statusText,offset msgSaved
@@ -643,7 +652,7 @@ save_cleanup_error:
     je save_error
     mov dx,offset stagePath
     mov ah,41h
-    int 21h
+    DISK_INT
 save_error:
     mov statusText,offset msgSaveError
     stc
@@ -660,7 +669,7 @@ RenameFile proc
     push ds
     pop es
     mov ah,56h
-    int 21h
+    DISK_INT
     pop es
     ret
 RenameFile endp

@@ -3,6 +3,9 @@ rem Run inside DOSBox, from the project root.
 set BINED_TESTED=0
 if not exist BUILD\NUL mkdir BUILD
 if not exist BUILD\TESTDATA\NUL mkdir BUILD\TESTDATA
+if exist BUILD\TEST.OK del BUILD\TEST.OK
+if not "%BINED_BUILT%"=="1" goto failed
+if not exist BUILD\BUILD.OK goto failed
 if exist BUILD\TESTDATA\UI.BIN del BUILD\TESTDATA\UI.BIN
 if exist BUILD\TESTDATA\UI2.BIN del BUILD\TESTDATA\UI2.BIN
 TASM\TASM.EXE /m2 TESTS\TEST3.ASM,BUILD\ > BUILD\TESTASM.LOG
@@ -24,6 +27,7 @@ if not errorlevel 1 goto failed
 BUILD\BINED3.EXE BUILD\NO_SUCH\BAD.BIN > BUILD\OPENERR.LOG
 if not errorlevel 1 goto failed
 set BINED_TESTED=1
+echo PASS> BUILD\TEST.OK
 type BUILD\TEST.LOG
 type BUILD\UI.LOG
 goto end
