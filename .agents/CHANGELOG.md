@@ -456,3 +456,44 @@ introduced on 2026-10-23.
   and both warm performance batches below one BIOS tick.
 - **Remaining:** All four requested implementation steps are complete, each
   memory-updated and committed separately. No push was requested.
+
+## 2026-11-14 — F8 Go to offset
+
+- **Request:** Add higher-level Go to offset convenience on F8.
+- **Changes:** Added a bottom-row Go to offset dialog in `BINED3.ASM`, strict
+  1..8-digit absolute hexadecimal parsing, current/EOF values, Backspace/Esc,
+  inline input/range errors, EOF/zero acceptance, and scrolling while preserving
+  mode/focus. Accepted jumps reset digit and preferred-column state; Text uses
+  its existing shared CR/LF cursor behavior. Added GOTO.INC parser/input/mode/
+  bounds/colour tests and actual F8 release keystrokes, updated F1 help, README,
+  both memory files and rebuilt tracked artifacts. Initial BUILD/BINED3.LST
+  differences were inspected as timestamp-only before rebuilding.
+- **Verification:** `python TESTS/RUN.PY` passed fresh warning-/error-free DOS
+  production/core/release builds, exact outputs, staging cleanup and hashes.
+  `python TESTS/HOSTTEST.PY` passed all five negative cases. New core checks
+  include FFFFFFFF, nine-digit/empty/invalid input, correction/cancellation,
+  empty-file/EOF/cross-64-KiB destinations, unchanged data/dirty state and mode,
+  cursor visibility, CR/LF normalization, prompt colours and SP. Release
+  integration exercised F8 in all views/foci and preserved a cancelled low
+  nibble. Authored source/documentation whitespace check passed.
+- **Remaining:** None for this request. Existing DOSBox attribute-reporting
+  limitation remains. No commit or push was requested for this feature.
+
+## 2026-11-14 — Commit F8 and publish the improvement series
+
+- **Request:** Commit implemented changes and push upstream.
+- **Changes:** Prepared `feat(editor): add F8 go-to-offset navigation` with F8
+  implementation, F1 help/README, core/release/GOTO.INC tests, both updated
+  memory files and tracked rebuilt BUILD artifacts. The push also publishes
+  the four existing local commits: `4265b58` exact-width rows, `5559de6` fresh
+  builds/save failures, `0c52671` Text layout cache, and `5fb98de` UI polish.
+  Reviewed and updated both memory files before committing.
+- **Verification:** Reviewed status/diffs, new regression source, generated
+  maps/logs/listing entries, recent and outgoing commit history, branch tracking
+  and remote URL. `python TESTS/VERIFY.PY --fresh` passed source/output hashes,
+  exact bytes, staging cleanup and build logs; `python TESTS/HOSTTEST.PY` passed
+  all five negative cases. Authored source/docs whitespace check passed. DOS
+  runtime tests were not repeated for this packaging-only task; the preceding
+  F8 entry records the passing fresh production/core/release run.
+- **Remaining:** Commit/push completion is reported in the final response.
+  The known DOSBox mounted-drive attribute-reporting limitation is unchanged.

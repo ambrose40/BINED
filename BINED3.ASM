@@ -102,6 +102,10 @@ renderColumn    dw 0
 renderValue     db 0
 renderAttr      db 0
 dialogLength    dw 0
+gotoInput       db 10 dup (0)       ; nine visible chars + terminator, parsed as <=8
+gotoLength      dw 0
+gotoDone        db 0               ; 0 = editing, 1 = accepted, 2 = cancelled
+gotoError       dw 0
 textCursorRow   dw 0
 textCursorCol   dw 0
 textAbsoluteLine dd 0
@@ -158,8 +162,8 @@ helpText10      db 'Backspace: previous byte; deletes in Text.',0
 helpText11      db 'F2: save the file.',0
 helpText12      db 'F4: save the file under a new name.',0
 helpText13      db 'F5 / F6: switch to binary / hex digit editing.',0
-helpText14      db 'Enter (Text): insert a DOS CR/LF line break.',0
-helpText15      db 'F7: full-screen Text editing (Enter inserts CR/LF).',0
+helpText14      db 'F7: full-screen Text editing (Enter inserts CR/LF).',0
+helpText15      db 'F8: go to a hex file offset (EOF allowed).',0
 helpText16      db 'Tab: ASCII/numeric in HEX/BIN; tab byte in Text.',0
 helpText17      db 'Esc: quit (prompts if changes are unsaved).',0
 helpLines       dw offset helpText1, offset helpText2, offset helpText3
@@ -170,6 +174,11 @@ helpLines       dw offset helpText1, offset helpText2, offset helpText3
                 dw offset helpText16, offset helpText17, 0
 helpReturn      db 'Any key: return to the editor.',0
 saveAsText      db 'Save as (Esc cancels, Enter accepts):',0
+gotoPrompt      db 'Go to offset (HEX, 0..EOF; Enter accepts, Esc cancels):',0
+gotoInvalid     db 'Enter 1-8 hex digits (0-9, A-F). Backspace corrects; Esc cancels.',0
+gotoRange       db 'Offset is beyond EOF. Correct it or press Esc to cancel.',0
+gotoEOFText     db 'EOF: ',0
+gotoCurrentText db 'Current: ',0
 quitText        db 'Unsaved changes: S = save and quit, D = discard, Esc = cancel',0
 msgReady        db 'F1 Help | Sizes/offsets are hex. EOF is an append position.',0
 msgNew          db 'New file. Type to append bytes, then F2 to save.',0
@@ -1483,6 +1492,107 @@ left_done:
     ret
 MoveLeft endp
 
+; DS:SI zero-terminated hexadecimal offset -> EAX, CF on empty/invalid/>8 digits.
+; Parse into EDX so character conversion cannot corrupt the accumulator's AL.
+ParseHexOffset proc
+    xor edx,edx
+    xor cx,cx
+parse_offset_next:
+    lodsb
+    test al,al
+    jz parse_offset_end
+    cmp cx,8
+    jae parse_offset_bad
+    call AsciiToHex
+    jc parse_offset_bad
+    movzx ebx,al
+    shl edx,4
+    or edx,ebx
+    inc cx
+    jmp parse_offset_next
+parse_offset_end:
+    jcxz parse_offset_bad
+    mov eax,edx
+    clc
+    ret
+parse_offset_bad:
+    stc
+    ret
+ParseHexOffset endp
+
+ResetGotoInput proc
+    mov gotoInput,0
+    mov gotoLength,0
+    mov gotoDone,0
+    mov gotoError,0
+    ret
+ResetGotoInput endp
+
+; Validate before changing any navigation state. Range errors do not clamp.
+ApplyGotoOffset proc
+    mov si,offset gotoInput
+    call ParseHexOffset
+    jc goto_offset_invalid
+    cmp eax,fileSize
+    ja goto_offset_range
+    mov digitIndex,0
+    mov textGoalValid,0
+    mov textLastValid,0
+    call SetCursor
+    call EnsureVisible
+    mov gotoDone,1
+    mov gotoError,0
+    clc
+    ret
+goto_offset_invalid:
+    mov gotoError,offset gotoInvalid
+    stc
+    ret
+goto_offset_range:
+    mov gotoError,offset gotoRange
+    stc
+    ret
+ApplyGotoOffset endp
+
+; AX BIOS key -> bounded dialog input. Navigation/file state changes on accept only.
+HandleGotoKey proc
+    cmp al,27
+    je goto_key_cancel
+    cmp al,13
+    je ApplyGotoOffset
+    cmp al,8
+    je goto_key_backspace
+    cmp al,20h
+    jb goto_key_done
+    cmp al,7Eh
+    ja goto_key_done
+    mov bx,gotoLength
+    cmp bx,9
+    jae goto_key_limit
+    mov gotoInput[bx],al
+    inc bx
+    mov gotoInput[bx],0
+    mov gotoLength,bx
+    mov gotoError,0
+goto_key_done:
+    ret
+goto_key_limit:
+    mov gotoError,offset gotoInvalid
+    ret
+goto_key_cancel:
+    mov gotoDone,2
+    ret
+goto_key_backspace:
+    mov bx,gotoLength
+    test bx,bx
+    jz goto_key_done
+    dec bx
+    mov gotoInput[bx],0
+    mov gotoLength,bx
+    mov gotoError,0
+    ret
+HandleGotoKey endp
+
 ; EAX = proposed cursor offset (nonnegative). Clamp to EOF.
 SetCursor proc
     cmp eax,fileSize
@@ -1596,6 +1706,8 @@ key_extended:
     je key_hex
     cmp ah,41h
     je key_text_mode
+    cmp ah,42h
+    je key_goto
     cmp ah,4Bh
     je key_left
     cmp ah,4Dh
@@ -1768,6 +1880,9 @@ key_hex:
 key_text_mode:
     mov al,3
     call SetMode
+    ret
+key_goto:
+    call GotoDialog
     ret
 key_insert:
     call InsertByte
@@ -2622,6 +2737,55 @@ DialogPrompt proc
     pop es
     ret
 DialogPrompt endp
+
+RenderGotoDialog proc
+    mov si,offset gotoPrompt
+    cmp gotoError,0
+    je goto_prompt_ready
+    mov si,gotoError
+goto_prompt_ready:
+    call DialogPrompt
+    push es
+    mov ax,0B800h
+    mov es,ax
+    mov di,24*160
+    mov ah,ATTR_SELECTED
+    mov si,offset gotoInput
+    call PutString
+    mov di,24*160 + 12*2
+    mov ah,ATTR_STATUS
+    mov si,offset gotoEOFText
+    call PutString
+    mov eax,fileSize
+    mov bl,ATTR_VALUE
+    call PutHex32
+    mov di,24*160 + 30*2
+    mov ah,ATTR_STATUS
+    mov si,offset gotoCurrentText
+    call PutString
+    mov eax,cursorOffset
+    call PutHex32
+    pop es
+    mov dx,1800h
+    mov ax,gotoLength
+    mov dl,al
+    xor bh,bh
+    mov ah,02h
+    int 10h
+    ret
+RenderGotoDialog endp
+
+GotoDialog proc
+    call ResetGotoInput
+goto_dialog_next:
+    call RenderGotoDialog
+    xor ah,ah
+    int 16h
+    call HandleGotoKey
+    cmp gotoDone,0
+    je goto_dialog_next
+    ret                           ; Main restores the editor screen/cursor
+GotoDialog endp
 
 SaveAsDialog proc
     mov dialogLength,0

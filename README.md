@@ -109,6 +109,7 @@ details.
 | Tab in Text | Insert one tab byte (`09h`), displayed at 8-column tab stops |
 | F5 / F6 | Binary / hex view with digit/bit editing |
 | F7 | Full-screen Text editor |
+| F8 | Go to an absolute hexadecimal file offset |
 | Enter in Text | Insert a DOS CR/LF line break (`0Dh 0Ah`) |
 | Left / Right | Previous / next hex digit, bit, or ASCII byte |
 | Up / Down | Previous / next row |
@@ -132,6 +133,20 @@ column and back, preserving its layout and viewport. The title shows
 Left/Right move one byte at a time in ASCII mode. Numeric/ASCII views show
 printable ASCII characters (`20h`–`7Eh`); other bytes appear as dots.
 Offsets, file size and buffer capacity are displayed in **hexadecimal**.
+
+### Go to offset
+
+Press **F8**, type **1–8 hexadecimal digits** (`0`–`9`, `A`–`F`, lowercase also
+accepted), then **Enter**. Offsets are absolute, plain hexadecimal: for example,
+`10000` jumps to byte 65,536. The dialog displays the current offset and EOF.
+Zero and EOF are valid destinations, including zero in an empty file.
+
+**Backspace** corrects input and **Esc** cancels without changing the cursor,
+viewport, or digit selection. Empty, malformed, overlength, and beyond-EOF
+values leave the dialog open with an explanatory message. A successful jump
+selects the first digit/bit of the requested byte and scrolls it into view,
+preserving HEX/BIN/ASCII/Text mode and ASCII-column focus. Text mode uses its
+existing shared CR/LF cursor cell: targeting the LF of a CR/LF pair selects CR.
 
 ### Full-screen Text editing
 
@@ -332,6 +347,9 @@ Text checks additionally cover CR/LF insertion/deletion across 64 KiB, an exact
 tabs and vertical navigation, full-width wrapping/EOF/empty-line scrolling,
 text/selection colours, and selected/typed HEX/BIN values. A separate 1,000-cycle
 Text insert/newline/backspace stress check preserves SP over 4,000 key events.
+F8 checks cover strict 32-bit hexadecimal parsing, EOF/empty-file/range bounds,
+Backspace correction, cancellation, cross-64-KiB jumps, visibility and unchanged
+data/dirty state in every mode/focus, shared Text CR/LF cells, and prompt colours.
 Test-only DOS interception also exercises failed/short writes, close failure,
 install-rename rollback, and failed restoration. It verifies original/recovery
 bytes and dirty state, then removes recovery fixtures. Release code contains
@@ -340,6 +358,7 @@ direct DOS interrupts and no fault-injection code.
 `KEYDRIVE.COM` separately runs the **release EXE** via DOS EXEC, supplying
 BIOS keystrokes for help, numeric/right-column ASCII editing, F5/F6/F7 mode
 selection, Tab focus toggling, full-screen Text with CR/LF/tab insertion,
+F8 acceptance/error/cancellation and focus preservation,
 Backspace/Delete, navigation, save-as and save-and-quit. The final UI output is
 `b"\xffz !? H\r\nText\r\n\tOK"`. `TEXT.BIN` independently round-trips
 `b"A\r\nB"` through production save/load procedures.

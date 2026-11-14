@@ -949,7 +949,9 @@ test_dispatch_loop:
     jne TestFailed
     cmp word ptr es:[10*160+13*2],0E41h ; yellow ASCII input label
     jne TestFailed
-    cmp word ptr es:[18*160+14*2],0E37h ; yellow F7 mode key
+    cmp word ptr es:[17*160+14*2],0E37h ; yellow F7 mode key
+    jne TestFailed
+    cmp word ptr es:[18*160+14*2],0E38h ; yellow F8 Go to offset key
     jne TestFailed
     cmp word ptr es:[19*160+13*2],0E54h ; yellow Tab cycle key
     jne TestFailed
@@ -1177,9 +1179,13 @@ test_full_row_video_fill:
     jne TestFailed
     call TestTextPolish
     jc TestFailed
+    call TestGotoVideo
+    jc TestFailed
     call EndVideo
     mov videoActive,0
     call TestSaveFailures
+    jc TestFailed
+    call TestGotoOffset
     jc TestFailed
 
     mov testCase,offset caseFiles
@@ -1393,3 +1399,4 @@ include TESTS\BOUNDS.INC
 include TESTS\SAVEFAIL.INC
 include TESTS\CACHE.INC
 include TESTS\POLISH.INC
+include TESTS\GOTO.INC

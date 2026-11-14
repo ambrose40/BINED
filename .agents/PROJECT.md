@@ -39,6 +39,9 @@ Persistent user requirements:
 - Full-screen Text uses bright-green characters and a purple current character,
   matching HEX/BIN data. Enter inserts DOS CR/LF; Tab inserts `09h`, displayed
   using 8-column tab stops. The bottom-right corner shows HEX:/BIN: byte values.
+- F8 opens Go to offset in every mode: absolute plain hexadecimal, 1..8 digits,
+  Enter accepts, Backspace corrects, Esc cancels. Zero and EOF are valid; errors
+  keep the dialog open without navigation/data changes.
 
 ## Active files
 
@@ -57,6 +60,7 @@ Persistent user requirements:
 | `TESTS\RUN.PY` | Fresh gated DOSBox runner and source/output SHA-256 manifest |
 | `TESTS\HOSTTEST.PY` | Isolated negative freshness/link-result checks |
 | `TESTS\SAVEFAIL.INC` | Test-only DOS save-failure interception and recovery checks |
+| `TESTS\GOTO.INC` | F8 parser/input/range/navigation/colour regression checks |
 | `BUILD\MENUKEY.ASM` | Preserved working resident launcher-test key feeder |
 | `BUILD\MENUEXEC.ASM` | Preserved earlier child-COMMAND.COM debugging attempt |
 | `BUILD\MENU.IN` | Preserved stdin-redirection experiment input |
@@ -94,7 +98,12 @@ requested four sequential improvement steps, each verified, memory-updated,
 and committed separately; no push was requested for these improvement commits.
 Steps 1/2/3 are local commits `4265b58` (row boundaries), `5559de6` (fresh tests/
 save failures), and `0c52671` (layout cache); step 4 completes navigation/status
-polish with its own commit. Detailed verification/history is in CHANGELOG.md.
+polish as `5fb98de`. Detailed verification/history is in CHANGELOG.md.
+The subsequent user request authorizes committing F8 as
+`feat(editor): add F8 go-to-offset navigation` and publishing it together with
+those four local improvement commits to `origin/master`. The reviewed outgoing
+series starts at the remote baseline `b9611da`; the F8 commit includes source,
+help/docs/memory, GOTO.INC/core/release checks, and tracked rebuilt artifacts.
 
 ## Architecture and invariants
 
@@ -183,6 +192,16 @@ polish with its own commit. Detailed verification/history is in CHANGELOG.md.
 - Cursor may equal file size: EOF is an append position. Overwrite preserves
   other bits; newly appended bytes are zero-initialized. Insert/Delete shift
   bytes. Files exceeding actual buffer capacity are rejected.
+- `GotoDialog` is a balanced local BIOS input loop using rows 23/24, with gray
+  prompt/errors, purple input, green current/EOF labels and dark-purple values.
+  `ResetGotoInput`, `HandleGotoKey` and `RenderGotoDialog` separate input state
+  from navigation. A nine-character bounded field makes overlength input
+  visibly invalid; `ParseHexOffset` accepts only 1..8 hex digits, accumulates
+  in EDX and returns full 32-bit EAX/CF without overflow or AL corruption.
+  `ApplyGotoOffset` rejects offsets >fileSize instead of clamping, then resets
+  digitIndex/preferred-column/typed-byte fallback and calls EnsureVisible.
+  All modes/foci are preserved; Text retains its established LF-to-CR cursor
+  normalization. Esc, bad input and range errors retain cursor/view/digit state.
 - Saving writes/closes a unique sibling temporary file, renames the old
   target to a unique backup, then installs the new file. Failed installation
   attempts restoration. This is not power-loss-atomic. Successful replacement
@@ -253,7 +272,8 @@ call TESTS\TEST.BAT
 With no filename the editor opens/creates `UNTITLED.BIN`; missing files start
 empty. One quoted filename is accepted, subject to DOS-visible/8.3 paths.
 F1 help, F2 save, F4 save-as, F5 binary, F6 hex, F7 Text; Tab toggles numeric/
-right-column ASCII in HEX/BIN or inserts a tab byte in Text. Esc quits.
+right-column ASCII in HEX/BIN or inserts a tab byte in Text. F8 goes to an
+absolute hexadecimal offset. Esc quits.
 
 Unattended build/test, followed by independent host verification:
 
@@ -281,7 +301,21 @@ with this bundled environment.
 
 ### Coverage and last verified results
 
-Latest verification: improvement step 4 (2026-11-14), fresh RUN.PY production/
+Latest verification: F8 Go to offset (2026-11-14), fresh RUN.PY production/core/
+release/bytes/hash checks and all five HOSTTEST cases passed. GOTO.INC tests
+empty/invalid/overlength/full-32-bit parsing and ranges, Backspace correction,
+Esc and digit-selection retention, cross-64-KiB/EOF/zero jumps in five mode/
+focus combinations, unchanged file bytes/dirty state, visible cursor bounds,
+Text CR/LF normalization, input/prompt colours and balanced SP. KEYDRIVE uses
+actual F8 dialogs in empty/HEX/BIN/ASCII/Text cases, including an invalid range
+and a cancelled low-nibble selection. The pre-existing LST change was inspected
+as timestamp-only; normal feature builds regenerated tracked artifacts.
+For F8 commit/push packaging, `VERIFY.PY --fresh` and all five HOSTTEST cases
+were rerun successfully, and authored-file whitespace checks passed. No DOS
+runtime rebuild was repeated for packaging; the preceding F8 feature run is
+the current production/core/release runtime result.
+
+Step 4 verification (2026-11-14): fresh RUN.PY production/
 core/release/bytes/hash checks and all five HOSTTEST cases passed. POLISH.INC
 covers preferred-column reset/retention, F7 viewport retention, Ln/Col/INS,
 reserved footer, full error text, wrapped recovery paths and modal bounds.

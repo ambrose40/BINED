@@ -113,6 +113,7 @@ tailEnd         db 13
 passedText      db 'PASS: release EXE HEX/BIN/ASCII/Text, CR/LF, help and save.',13,10,'$'
 failedText      db 'FAIL: release EXE integration test.',13,10,'$'
 keys:
+    dw 4200h,'0',13               ; F8 accepts zero in an empty document
     dw 3B00h,0078h                ; F1, x: help and dismissal
     dw 0034h,0031h,0034h,0032h   ; hex 41 42
     dw 3F00h,7700h               ; binary, Ctrl-Home
@@ -125,20 +126,24 @@ keys:
     dw 'B','U','I','L','D','\','T','E','S','T','D','A','T','A','\'
     dw 'U','I','2','.','B','I','N',13
     dw 003Fh                     ; invalid hex character: ignored
-    dw 'F','F'                   ; change first byte: FF 44
+    dw 4200h,'F','F','F','F','F','F','F','F',13,27 ; out-of-range stays open
+    dw 'F',4200h,27,'F'          ; cancelled F8 preserves the selected low nibble
     dw 0009h                     ; Tab ASCII: cursor already at byte 1
+    dw 4200h,'1',13              ; F8 retains HEX's right-column ASCII focus
     dw 'z',' ','!'               ; overwrite then append: FF 7A 20 21
     dw 3F00h,0009h,0009h        ; F5 BIN, Tab ASCII, Tab numeric
+    dw 4200h,'4',13              ; EOF append in BIN, no mode switch
     dw '0','1','0','0'          ; append binary 01000001 (41)
     dw '0','0','0','1'
     dw 0009h                    ; Tab ASCII in binary layout
-    dw 4B00h,'?'                ; overwrite last byte with printable punctuation
+    dw 4200h,'4',13,'?'          ; F8 retains BIN's ASCII focus
     dw 3B00h,'x'                ; help/dismiss while ASCII mode active
     dw ' '                      ; append a space in binary ASCII focus
     dw 4000h,0009h              ; F6 -> HEX, Tab -> ASCII (HEX)
     dw 'H'                      ; append in hex ASCII focus
     dw 4100h                    ; F7 -> full-screen Text
     dw 13,'T','e','x','t',13,9,'O','k',8,'K' ; CR/LF, tabulation, Backspace
+    dw 4200h,'1','0',13,'X',8    ; Text goto byte 10h, insert then delete X
     dw 4700h,4D00h,5300h,'O',4F00h ; Home, Right past tab, replace O, End
     dw 3B00h,'x'                ; modal help in full Text view
     dw 4000h,3F00h,4100h        ; F6 HEX, F5 BIN, F7 Text; no conversion
