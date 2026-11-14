@@ -145,6 +145,9 @@ breaks without converting the file's bytes.
 Left/Right move over characters, tabs, and complete CR/LF pairs. Up/Down and
 PgUp/PgDn move by display rows, retaining the column where possible and clamping
 on shorter rows; tabs have a single cursor position at their first cell.
+Consecutive vertical moves remember the preferred column across shorter rows;
+horizontal movement, editing, or mode selection starts a new column preference.
+Pressing F7 when Text is already active preserves the current viewport.
 Home/End select the current display-row start/end; Ctrl-Home/Ctrl-End select
 file start/EOF. Backspace and Delete remove a whole CR/LF pair when joining
 lines. Enter needs two free bytes and leaves the document untouched if only
@@ -157,6 +160,11 @@ The bottom-right **`HEX:`** and **`BIN:`** fields show the actual selected byte
 typed byte until another key is pressed; Enter's fallback value is `0Dh`.
 Dashes indicate that no byte is selected. EOF is shown as `-`; the cursor on a
 line break is a highlighted blank. Changing views does not convert the file.
+The Text status row also shows one-based **Ln/Col** values in hexadecimal and
+a yellow **INS** indicator. The footer reserves its rightmost 22 columns for
+the byte inspector. Failed Save/Save As/save-and-quit operations open a
+dismissible error window with the complete message, hexadecimal DOS error code,
+and target/backup/staging paths; long paths wrap within the window.
 Text layout uses a bounded 128-checkpoint cache (about 1 KiB) for nearby row
 lookups. Edits invalidate affected checkpoints; file bytes remain authoritative.
 An immediate CR/LF, CR, or LF after exactly 80 display columns terminates that

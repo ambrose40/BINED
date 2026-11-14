@@ -33,6 +33,10 @@ TEXT_ROW_EOF    equ 0
 TEXT_ROW_WRAP   equ 1
 TEXT_KIND_BREAK equ 2
 TEXT_CACHE_ROWS equ 128
+ERROR_LEFT      equ 1
+ERROR_TOP       equ 5
+ERROR_WIDTH     equ 78
+ERROR_HEIGHT    equ 14
 HELP_LEFT       equ 11
 HELP_TOP        equ 2
 HELP_WIDTH      equ 58
@@ -100,6 +104,9 @@ renderAttr      db 0
 dialogLength    dw 0
 textCursorRow   dw 0
 textCursorCol   dw 0
+textAbsoluteLine dd 0
+textGoalColumn  dw 0
+textGoalValid   db 0
 textRowEnd      dd 0
 textRowNext     dd 0
 textMoveRows    dd 0
@@ -126,6 +133,14 @@ textModeText    db 'Text',0
 textColumnText  db ' TEXT: insert characters | Enter: CR/LF | Backspace/Del: delete',0
 byteHexText     db 'HEX: ',0
 byteBinText     db '  BIN: ',0
+textLineLabel   db 'Ln: ',0
+textColLabel    db ' Col:',0
+textInsertLabel db ' INS',0
+saveErrorTitle  db ' Save error ',0
+saveErrorLabel  db 'DOS error: ',0
+saveTargetLabel db 'Target / original:',0
+saveBackupLabel db 'Original backup:',0
+saveStageLabel  db 'Staged data:',0
 offsetText      db 'Offset: ',0
 sizeText        db '  Size: ',0
 capacityText    db '  Capacity: ',0
@@ -578,6 +593,7 @@ CreateSiblingTemp endp
 ; CF clear only after the new file has been fully written, closed and installed.
 SaveDocument proc
     mov saveTarget,dx
+    mov lastError,0
     mov stageExists,0
     mov backupExists,0
     mov ax,4300h
@@ -588,12 +604,12 @@ SaveDocument proc
     jmp save_create_stage
 save_check_missing:
     cmp ax,2
-    jne save_error
+    jne save_record_error
 save_create_stage:
     mov si,saveTarget
     mov di,offset stagePath
     call CreateSiblingTemp
-    jc save_error
+    jc save_record_error
     mov stageExists,1
     mov fileHandle,ax
     mov eax,fileSize
@@ -648,8 +664,9 @@ save_restore:
     mov dx,offset backupPath
     mov di,saveTarget
     call RenameFile
-    jc save_error                  ; retain both files for manual recovery
+    jc save_record_error           ; retain both files for manual recovery
     mov backupExists,0
+    mov ax,lastError
     jmp save_cleanup_error
 save_transfer_error:
     push ax
@@ -662,11 +679,17 @@ save_cleanup_error:
     mov dx,offset stagePath
     mov ah,41h
     DISK_INT
+    jc save_error
+    mov stageExists,0
+    jmp save_error
+save_record_error:
+    mov lastError,ax
 save_error:
     mov statusText,offset msgSaveError
     stc
     ret
 save_read_only:
+    mov lastError,5
     mov statusText,offset msgReadOnly
     stc
     ret
@@ -692,10 +715,14 @@ SetMode proc
     mov editMode,al
     mov digitIndex,0
     mov textLastValid,0
+    mov textGoalValid,0
     cmp al,3
     jne set_mode_numeric
+    cmp viewMode,2
+    je set_mode_text_layout
     mov viewMode,2
     mov viewOffset,0
+set_mode_text_layout:
     mov digitsPerByte,1
     mov bytesPerRow,80
     mov pageBytes,DATA_ROWS * 80
@@ -893,6 +920,7 @@ DeleteByte endp
 
 ; EAX changed byte -> lazy cache invalidation. Preserve all general registers.
 MarkTextChanged proc
+    mov textGoalValid,0
     cmp eax,textDirtyOffset
     jae text_changed_done
     mov textDirtyOffset,eax
@@ -1261,6 +1289,7 @@ text_visible_find:
     mov eax,cursorOffset
     call FindTextRow
     mov ebp,ebx
+    mov textAbsoluteLine,ebx
     mov textCursorCol,cx
     mov eax,viewOffset
     call FindTextRow
@@ -1333,7 +1362,12 @@ TextVertical proc
     mov textMoveRows,eax
     mov eax,cursorOffset
     call FindTextRow
-    mov ebp,ecx
+    cmp textGoalValid,0
+    jne text_vertical_goal
+    mov textGoalColumn,cx
+    mov textGoalValid,1
+text_vertical_goal:
+    movzx ebp,textGoalColumn
     add ebx,textMoveRows
     jns text_vertical_row
     xor ebx,ebx
@@ -1509,6 +1543,22 @@ EnsureVisible endp
 ; loops, cross-procedure jumps into epilogues, recursion, or SP resets.
 HandleKey proc
     mov textLastValid,0
+    cmp al,0
+    je key_check_vertical
+    cmp al,0E0h
+    jne key_reset_goal
+key_check_vertical:
+    cmp ah,48h
+    je key_goal_ready
+    cmp ah,50h
+    je key_goal_ready
+    cmp ah,49h
+    je key_goal_ready
+    cmp ah,51h
+    je key_goal_ready
+key_reset_goal:
+    mov textGoalValid,0
+key_goal_ready:
     cmp al,27
     je key_quit
     cmp al,9
@@ -1730,6 +1780,9 @@ key_delete:
 key_save:
     mov dx,offset fileName
     call SaveDocument
+    jnc key_save_done
+    call SaveErrorDialog
+key_save_done:
     ret
 key_save_as:
     call SaveAsDialog
@@ -1951,6 +2004,10 @@ render_status:
     call PutString
     mov eax,bufferCapacity
     call PutHex32
+    cmp viewMode,2
+    jne render_text_status_done
+    call RenderTextPosition
+render_text_status_done:
     mov di,23 * 160
     mov ah,ATTR_SELECTED
     mov si,offset fileName
@@ -1958,7 +2015,14 @@ render_status:
     mov di,24 * 160
     mov ah,ATTR_FOOTER
     mov si,statusText
+    cmp viewMode,2
+    jne render_full_footer
+    mov cx,58
+    call PutLimitedString
+    jmp render_footer_done
+render_full_footer:
     call PutString
+render_footer_done:
     cmp viewMode,2
     jne render_inspector_done
     call RenderTextValues
@@ -1967,6 +2031,48 @@ render_inspector_done:
     call PlaceCursor
     ret
 RenderScreen endp
+
+; SI/AH string, CX maximum cells in an explicitly reserved screen region.
+PutLimitedString proc
+    jcxz limited_string_done
+limited_string_next:
+    lodsb
+    test al,al
+    jz limited_string_done
+    stosw
+    loop limited_string_next
+limited_string_done:
+    ret
+PutLimitedString endp
+
+RenderTextPosition proc
+    mov di,22*160 + 54*2
+    mov ah,ATTR_STATUS
+    mov si,offset textLineLabel
+    call PutString
+    mov eax,textAbsoluteLine
+    inc eax
+    mov bl,ATTR_VALUE
+    call PutHex32
+    mov ah,ATTR_STATUS
+    mov si,offset textColLabel
+    call PutString
+    mov dx,textCursorCol
+    inc dl
+    mov al,dl
+    shr al,4
+    call HexCharacter
+    mov ah,ATTR_VALUE
+    stosw
+    mov al,dl
+    and al,0Fh
+    call HexCharacter
+    stosw
+    mov ah,ATTR_MODE
+    mov si,offset textInsertLabel
+    call PutString
+    ret
+RenderTextPosition endp
 
 ; Full-width text content. Use exactly the same row parser as navigation.
 RenderText proc
@@ -2267,6 +2373,130 @@ PlaceCursor endp
 ; Small modal dialogs consume keys locally and return; they never enter the
 ; editor loop. DOS buffered console input is avoided in the video interface.
 ; ---------------------------------------------------------------------------
+SaveErrorDialog proc
+    mov ah,03h
+    xor bh,bh
+    int 10h
+    push cx
+    mov cx,2000h
+    mov ah,01h
+    int 10h
+    call RenderSaveError
+    xor ah,ah
+    int 16h
+    pop cx
+    mov ah,01h
+    int 10h
+    ret
+SaveErrorDialog endp
+
+; Full error text, numeric DOS code and bounded two-row recovery paths.
+RenderSaveError proc
+    push es
+    mov ax,0B800h
+    mov es,ax
+    mov di,ERROR_TOP*160 + ERROR_LEFT*2
+    mov dx,ERROR_HEIGHT
+save_error_clear_row:
+    mov ax,ATTR_FOOTER*256 + ' '
+    mov cx,ERROR_WIDTH
+    rep stosw
+    add di,(80-ERROR_WIDTH)*2
+    dec dx
+    jnz save_error_clear_row
+    mov di,ERROR_TOP*160 + ERROR_LEFT*2
+    mov ax,ATTR_SELECTED*256 + 218
+    stosw
+    mov al,196
+    mov cx,ERROR_WIDTH-2
+    rep stosw
+    mov al,191
+    stosw
+    mov di,(ERROR_TOP+1)*160 + ERROR_LEFT*2
+    mov cx,ERROR_HEIGHT-2
+    mov al,179
+save_error_sides:
+    mov es:[di],ax
+    mov es:[di+(ERROR_WIDTH-1)*2],ax
+    add di,160
+    loop save_error_sides
+    mov al,192
+    stosw
+    mov al,196
+    mov cx,ERROR_WIDTH-2
+    rep stosw
+    mov al,217
+    stosw
+    mov di,ERROR_TOP*160 + (ERROR_LEFT+3)*2
+    mov si,offset saveErrorTitle
+    call PutString
+    mov di,6*160 + 3*2
+    mov ah,ATTR_FOOTER
+    mov si,statusText
+    mov cx,74
+    call PutLimitedString
+    mov di,7*160 + 3*2
+    mov si,offset saveErrorLabel
+    call PutString
+    movzx eax,lastError
+    mov bl,ATTR_VALUE
+    call PutHex32
+    mov di,8*160 + 3*2
+    mov ah,ATTR_FOOTER
+    mov si,offset saveTargetLabel
+    cmp backupExists,0
+    je save_error_target_label
+    mov si,offset saveBackupLabel
+save_error_target_label:
+    call PutString
+    mov si,saveTarget
+    test si,si
+    jnz save_error_target_ready
+    mov si,offset fileName
+save_error_target_ready:
+    cmp backupExists,0
+    je save_error_target_path
+    mov si,offset backupPath
+save_error_target_path:
+    mov di,9*160 + 3*2
+    mov ah,ATTR_SELECTED
+    call PutRecoveryPath
+    cmp stageExists,0
+    je save_error_return
+    mov di,11*160 + 3*2
+    mov ah,ATTR_FOOTER
+    mov si,offset saveStageLabel
+    call PutString
+    mov di,12*160 + 3*2
+    mov si,offset stagePath
+    mov ah,ATTR_SELECTED
+    call PutRecoveryPath
+save_error_return:
+    mov di,17*160 + 3*2
+    mov ah,ATTR_FOOTER
+    mov si,offset helpReturn
+    call PutHelpLine
+    pop es
+    ret
+RenderSaveError endp
+
+PutRecoveryPath proc
+    mov dx,2
+recovery_path_row:
+    mov cx,74
+recovery_path_character:
+    lodsb
+    test al,al
+    jz recovery_path_done
+    stosw
+    loop recovery_path_character
+    add di,12
+    dec dx
+    jnz recovery_path_row
+recovery_path_done:
+    ret
+PutRecoveryPath endp
+
 HelpDialog proc
     ; Hide the editing cursor while the modal is visible; preserve its shape.
     mov ah,03h
@@ -2462,7 +2692,10 @@ save_as_accept:
     je save_as_done
     mov dx,offset inputPath
     call SaveDocument
-    jc save_as_done
+    jnc save_as_saved
+    call SaveErrorDialog
+    jmp save_as_done
+save_as_saved:
     mov si,offset inputPath
     mov di,offset fileName
 save_as_copy:
@@ -2492,7 +2725,9 @@ quit_wait:
     jne quit_wait
     mov dx,offset fileName
     call SaveDocument
-    jc quit_cancel
+    jnc quit_accept
+    call SaveErrorDialog
+    jmp quit_cancel
 quit_accept:
     mov quitRequested,1
 quit_cancel:

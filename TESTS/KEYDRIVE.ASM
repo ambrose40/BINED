@@ -142,6 +142,9 @@ keys:
     dw 4700h,4D00h,5300h,'O',4F00h ; Home, Right past tab, replace O, End
     dw 3B00h,'x'                ; modal help in full Text view
     dw 4000h,3F00h,4100h        ; F6 HEX, F5 BIN, F7 Text; no conversion
+    dw 3E00h                    ; failed Save As opens a dismissible error modal
+    dw 'B','U','I','L','D','\','N','O','_','S','U','C','H','\'
+    dw 'B','A','D','.','B','I','N',13,'x'
     dw 011Bh,'s'                 ; Esc, save-and-quit
 keysEnd:
     db 512 dup (?)

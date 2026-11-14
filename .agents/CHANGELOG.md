@@ -433,3 +433,26 @@ introduced on 2026-10-23.
   An initial TLINK 4 rejection of 32-bit indexed relocations was corrected by
   using explicitly 16-bit DGROUP indexing before successful verification.
 - **Remaining:** Step 4 follows. No push was requested.
+
+## 2026-11-14 — Improvement 4: navigation, viewport and status polish
+
+- **Request:** Finish the fourth improvement step, verify, update memory and
+  make its own corresponding commit.
+- **Changes:** Text vertical/page movement remembers a preferred column across
+  short rows and resets it on other input/edit/mode changes. Reselecting Text
+  with F7 preserves its viewport. Added hexadecimal one-based Ln/Col and INS
+  status, a bounded Text footer and a full save-error modal with DOS code and
+  wrapped target/backup/staging paths. SaveDocument retains accurate error
+  codes through rollback and updates staging flags after cleanup. Added
+  POLISH.INC, strengthened save-fault assertions and release failed-Save-As
+  dismissal coverage; updated README/current memory and rebuilt artifacts.
+- **Verification:** RUN.PY fresh production/core/release tests, byte/log/hash
+  checks, five HOSTTEST cases and authored-file whitespace check passed.
+  Core checked sticky/reset columns, viewport retention, status colours/values,
+  inspector reservation, complete error text, long recovery paths and bounds.
+  Release integration dismissed a real failed Save As before successful save-
+  and-quit. The external DOSBox audit reports offset 23 after two Down moves
+  through a short row, retained viewOffset 320 on F7, fixed exact-width rows,
+  and both warm performance batches below one BIOS tick.
+- **Remaining:** All four requested implementation steps are complete, each
+  memory-updated and committed separately. No push was requested.

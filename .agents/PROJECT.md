@@ -89,14 +89,12 @@ The user's separate `LAUNCH.BAT` display edits were committed locally as
 four DOS editor invocation examples, and action/error/exit paths include
 additional `echo .` dot separator lines. Menu choices and dispatch are unchanged.
 That follow-up was commit-only; it was not pushed in that task.
-At Text-feature packaging, both `master` and the tracked `origin/master` point
-to `31cf0c4`. The full-screen Text feature is prepared for
-`feat(editor): add full-screen text editing and byte inspector`, including
-corrected controls, help, README/memory, core/release/host tests, rebuilt tracked
-BUILD artifacts, and the new exact-byte `BUILD/TESTDATA/TEXT.BIN` fixture.
-That Text feature was completed and pushed as `b9611da`. The user subsequently
+The full-screen Text feature was completed and pushed as `b9611da`. The user subsequently
 requested four sequential improvement steps, each verified, memory-updated,
 and committed separately; no push was requested for these improvement commits.
+Steps 1/2/3 are local commits `4265b58` (row boundaries), `5559de6` (fresh tests/
+save failures), and `0c52671` (layout cache); step 4 completes navigation/status
+polish with its own commit. Detailed verification/history is in CHANGELOG.md.
 
 ## Architecture and invariants
 
@@ -123,7 +121,8 @@ and committed separately; no push was requested for these improvement commits.
   and preserve file contents/cursorOffset, except Text normalizes an offset on
   the LF half of CR/LF to its CR cell. Numeric layout changes reset viewOffset;
   selecting the same numeric layout or toggling Tab focus preserves it. F7
-  reinitializes the Text viewport and EnsureVisible scrolls to the cursor.
+  preserves an already-active Text viewport; entering Text from numeric resets
+  its viewport and EnsureVisible scrolls to the cursor.
   HEX layout uses 16 bytes per row (320 per page),
   BIN uses 6 (120 per page), including when ASCII editing is active.
   `digitsPerByte` is 2/8/1 for navigation. Renderers use viewMode independently
@@ -137,6 +136,8 @@ and committed separately; no push was requested for these improvement commits.
   hardware cursor's row/column. CR/LF and a tab expansion each have one cursor
   position; tabs use 8-column stops. Up/Down/PgUp/PgDn preserve the current
   column where possible, clamping to shorter rows; Home/End use display rows.
+  Consecutive Up/Down/PgUp/PgDn remember textGoalColumn across short rows;
+  non-vertical keys, edits and mode selection clear textGoalValid.
   Exact-width rows absorb an immediately following CR/LF, CR, or LF, so no
   phantom blank row is created. `textRowWidth`/`textRowKind` expose the parsed
   row's boundary. Full-row End stays on its last byte, including at EOF.
@@ -163,6 +164,13 @@ and committed separately; no push was requested for these improvement commits.
   typing (`0Dh` for Enter), until another key clears `textLastValid`. With no
   selected/typed byte it shows dashes. `RenderText` uses bright-green text and
   purple selection; a selected tab highlights only its first expansion cell.
+  Text row 22 columns 54..76 additionally show one-based hexadecimal Ln/Col
+  and a yellow INS indicator. The Text footer is explicitly bounded to 58
+  columns so it cannot overwrite the byte inspector. Interactive save errors
+  open a 78x14 bordered modal at (1,5), with full message, lastError (hex),
+  target/original or backup path and any retained staging path. Paths wrap
+  within two 74-column rows. SaveDocument preserves the original install error
+  across successful rollback and clears stageExists after successful cleanup.
 - ASCII mode uses the right-hand column (zero-based 61 in HEX, 66 in BIN) for
   its cursor and purple character/EOF selection. The yellow title says
   `ASCII (HEX)` or `ASCII (BIN)`. `EditAscii` overwrites/appends a complete
@@ -273,21 +281,30 @@ with this bundled environment.
 
 ### Coverage and last verified results
 
-Latest verification: improvement step 3 (2026-11-14), RUN.PY fresh DOS/core/
+Latest verification: improvement step 4 (2026-11-14), fresh RUN.PY production/
+core/release/bytes/hash checks and all five HOSTTEST cases passed. POLISH.INC
+covers preferred-column reset/retention, F7 viewport retention, Ln/Col/INS,
+reserved footer, full error text, wrapped recovery paths and modal bounds.
+SAVEFAIL now asserts DOS error codes and staging flags. KEYDRIVE dismisses an
+actual failed Save As modal before saving the original target successfully.
+The external audit confirms final preferred-column offset 23, preserved view
+320, fixed row boundaries, and sub-one-tick small/large warm update batches.
+
+Step 3 verification (2026-11-14): RUN.PY fresh DOS/core/
 release/byte/manifest checks and all five HOSTTEST cases passed. CACHE.INC
 checks warm/cold lookup agreement after overwrite, insertion, deletion and
 size changes, plus at most 96 row parses for 32 warm viewport updates on a
 131,089-byte document. The external audit benchmark measured both 4 KiB and
 128 KiB warm update batches below one BIOS tick (previous 128 KiB: 39 ticks).
 
-Latest verification: improvement step 2 (2026-11-14), RUN.PY fresh build/core/
+Step 2 verification (2026-11-14): RUN.PY fresh build/core/
 release/byte/manifest checks passed, plus all five HOSTTEST negative cases.
 SAVEFAIL.INC injects failed/short writes, close failure, failed installation with
 successful restoration, and failed restoration retaining original/new recovery
 bytes. Fault paths preserve dirty state and leave no staging fixtures afterward.
 DISK_INT expands to a direct INT 21h in release; only TEST3 includes the hook.
 
-Latest verification: improvement step 1 (2026-11-14), warning-free production/
+Step 1 verification (2026-11-14): warning-free production/
 core/release DOS build/tests and host verification passed. `TESTS/BOUNDS.INC`
 adds 79/80/81/159/160-column EOF/CR/LF/CR-LF cases and exact-width tabs; video
 checks cover the full-width newline marker and immediately following text.

@@ -539,12 +539,13 @@ test_text_fixture:
     call HandleKey
     CHECK32 cursorOffset,5          ; shorter LF row clamps the column
     mov cursorOffset,8
+    mov textGoalValid,0            ; fixture cursor assignment starts a new run
     mov ax,5000h
     call HandleKey
     CHECK32 cursorOffset,11
     mov ax,4800h
     call HandleKey
-    CHECK32 cursorOffset,7
+    CHECK32 cursorOffset,8         ; preferred column survives the short row
     mov cursorOffset,3             ; entering Text on LF normalizes to CR
     call EnsureVisible
     CHECK32 cursorOffset,2
@@ -1174,6 +1175,8 @@ test_full_row_video_fill:
     jne TestFailed
     cmp word ptr es:[4000],0A55Ah
     jne TestFailed
+    call TestTextPolish
+    jc TestFailed
     call EndVideo
     mov videoActive,0
     call TestSaveFailures
@@ -1389,3 +1392,4 @@ TestVerifyPattern endp
 include TESTS\BOUNDS.INC
 include TESTS\SAVEFAIL.INC
 include TESTS\CACHE.INC
+include TESTS\POLISH.INC

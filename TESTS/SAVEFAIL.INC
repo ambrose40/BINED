@@ -132,8 +132,21 @@ fault_test_next:
     je fault_test_bad
     cmp fileSize,4
     jne fault_test_bad
+    mov ax,5
+    cmp faultCase,2
+    jne fault_expected_close
+    mov ax,001Dh
+fault_expected_close:
+    cmp faultCase,3
+    jne fault_expected_error
+    mov ax,6
+fault_expected_error:
+    cmp lastError,ax
+    jne fault_test_bad
     cmp faultCase,5
     je fault_test_recovery
+    cmp stageExists,0
+    jne fault_test_bad
     mov dx,offset faultPath
     mov ebp,45464153h
     call FaultCheckFile
