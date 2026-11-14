@@ -113,15 +113,18 @@ tailEnd         db 13
 passedText      db 'PASS: release EXE editing, F8/F9/F3, errors, help and save.',13,10,'$'
 failedText      db 'FAIL: release EXE integration test.',13,10,'$'
 keys:
+    dw 8500h,8600h               ; F11/F12 safely report empty history
     dw 3D00h,4300h,13,27         ; F3 without a pattern; empty F9 error and cancel
     dw 4200h,'0',13               ; F8 accepts zero in an empty document
     dw 3B00h,0078h                ; F1, x: help and dismissal
     dw 0034h,0031h,0034h,0032h   ; hex 41 42
+    dw 8500h,8600h              ; undo/redo a hex digit through the release event loop
     dw 4300h,'4','2',13,'4','2'  ; F9 hex finds B; rewrite the same byte
     dw 3D00h,'4','2'             ; F3 wraps and finds that byte again
     dw 3F00h,7700h               ; binary, Ctrl-Home
     dw 0030h,0031h,0030h,0030h   ; first byte -> 01000011 (43)
     dw 0030h,0030h,0031h,0031h
+    dw 8500h,8600h              ; binary bit undo/redo (identical input is not stored)
     dw 4000h,7500h,5200h         ; hex, Ctrl-End, insert zero at EOF
     dw 0034h,0034h               ; overwrite it with 44
     dw 7700h,5300h               ; Ctrl-Home, delete: 42 44
@@ -132,9 +135,11 @@ keys:
     dw 4200h,'F','F','F','F','F','F','F','F',13,27 ; out-of-range stays open
     dw 'F',4200h,27,4300h,27,'F' ; cancelled F8/F9 preserve the selected low nibble
     dw 4300h,'0','G',13,8,'0',13 ; invalid hex corrected to 00; miss preserves cursor
+    dw 8500h,8600h              ; search/dialog input does not consume undo history
     dw 0009h                     ; Tab ASCII: cursor already at byte 1
     dw 4200h,'1',13              ; F8 retains HEX's right-column ASCII focus
     dw 'z',' ','!'               ; overwrite then append: FF 7A 20 21
+    dw 8500h,8600h              ; ASCII append undo/redo
     dw 3F00h,0009h,0009h        ; F5 BIN, Tab ASCII, Tab numeric
     dw 4200h,'4',13              ; EOF append in BIN, no mode switch
     dw '0','1','0','0'          ; append binary 01000001 (41)
@@ -146,7 +151,8 @@ keys:
     dw 4000h,0009h              ; F6 -> HEX, Tab -> ASCII (HEX)
     dw 'H'                      ; append in hex ASCII focus
     dw 4100h                    ; F7 -> full-screen Text
-    dw 13,'T','e','x','t',13,9,'O','k',8,'K' ; CR/LF, tabulation, Backspace
+    dw 13,8500h,8600h            ; CR/LF is one undoable Text change
+    dw 'T','e','x','t',13,9,'O','k',8,'K',8500h,'K',8600h ; new edit clears redo
     dw 4300h,9,'T','e','x','t',13,5300h,'T' ; text search and same-byte replacement
     dw 3D00h,5300h,'T'          ; repeat wraps, keeping Text insertion mode
     dw 4300h,9,'0','9',13,5300h,9 ; hex search finds tab; replace with an actual tab
@@ -159,6 +165,7 @@ keys:
     dw 3E00h                    ; failed Save As opens a dismissible error modal
     dw 'B','U','I','L','D','\','N','O','_','S','U','C','H','\'
     dw 'B','A','D','.','B','I','N',13,'x'
+    dw 3C00h,8500h,8600h,'X',8  ; savepoint, undo/redo, then a new edit/deletion
     dw 011Bh,'s'                 ; Esc, save-and-quit
 keysEnd:
     db 512 dup (?)

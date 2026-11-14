@@ -47,12 +47,18 @@ Persistent user requirements:
   Enter searches, empty Enter repeats, Backspace corrects and Esc cancels.
   F3 finds the next occurrence. Patterns are case-sensitive ASCII or hex byte
   pairs, up to 32 bytes. Forward search wraps once and never modifies file data.
+- F11 undoes and F12 redoes up to 32 retained editing changes in RAM. CR/LF
+  insertion/Text line joins are single changes; individual hex digits/binary
+  bits are separate changes. No-ops/navigation do not consume history. New
+  actual edits after undo discard redo; saves retain history and mark a clean
+  history state. Undo/redo preserve the active mode/focus.
 
 ## Active files
 
 | Path | Purpose |
 | --- | --- |
 | `BINED3.ASM` | Production editor, including memory, disk I/O, editing, UI |
+| `UNDO.INC` | Production 32-change key transactions, deltas, replay and savepoints |
 | `BUILD.BAT` | Builds `BUILD\BINED3.EXE`; sets `BINED_BUILT=1` on success |
 | `LAUNCH.BAT` | DOSBox menu; builds, runs, tests, and displays logs |
 | `dosbox_bined.conf` | Bundled DOSBox setup; 486 CPU; mounts project as C: |
@@ -67,6 +73,7 @@ Persistent user requirements:
 | `TESTS\SAVEFAIL.INC` | Test-only DOS save-failure interception and recovery checks |
 | `TESTS\GOTO.INC` | F8 parser/input/range/navigation/colour regression checks |
 | `TESTS\SEARCH.INC` | F9/F3 parsing, search, repeat/wrap, bounds and UI checks |
+| `TESTS\UNDO.INC` | Undo/redo grouping, eviction, branching, saves, bounds and stack tests |
 | `BUILD\MENUKEY.ASM` | Preserved working resident launcher-test key feeder |
 | `BUILD\MENUEXEC.ASM` | Preserved earlier child-COMMAND.COM debugging attempt |
 | `BUILD\MENU.IN` | Preserved stdin-redirection experiment input |
@@ -110,10 +117,13 @@ navigation`), together with all four improvement commits. F9/F3 was subsequently
 committed and pushed as `153bde5` (`feat(editor): add F9 text and hex search with
 find next`), including search/help, README/memory, SEARCH.INC, core/release
 regressions and rebuilt artifacts.
-The bright-red mirrored ASCII selection is prepared as
-`feat(ui): highlight selected ASCII preview in hex and binary modes`, targeting
-master -> origin/master from baseline 153bde5. It packages the renderer change,
-palette regressions, README/memory and the tracked rebuilt editor/test artifacts.
+The bright-red mirrored ASCII selection was committed and pushed as `ee0632d`
+(`feat(ui): highlight selected ASCII preview in hex and binary modes`).
+The user subsequently requested committing/pushing undo/redo as
+`feat(editor): add 32-level undo and redo on F11 and F12`, from baseline ee0632d
+on master -> origin/master. The changeset includes production/test UNDO.INC,
+enhanced keyboard dispatch, savepoints, help/docs/memory, freshness coverage
+and tracked rebuilt artifacts.
 
 ## Architecture and invariants
 
@@ -123,6 +133,9 @@ palette regressions, README/memory and the tracked rebuilt editor/test artifacts
   or flat/protected-mode addressing is used.
 - `Main` owns the one editor event loop. Procedures return normally; there
   are no recursive renderer/input loops or production SP resets.
+  Its enhanced BIOS keyboard read (INT 16h/AH=10h) delivers F11/F12 scan codes
+  85h/86h. Modal input loops still return to Main; the key feeder handles both
+  standard and enhanced BIOS reads.
 - Startup shrinks the PSP allocation through the end of the stack, then
   allocates up to 512 KiB using DOS AH=48h. On insufficient memory it requests
   the largest available block. Never write file data to arbitrary segments.
@@ -176,7 +189,27 @@ palette regressions, README/memory and the tracked rebuilt editor/test artifacts
   `DeleteText` removes a CR/LF pair together to join lines. Insert retains zero-
   byte insertion. Other unassigned controls/high-byte input are ignored. All
   existing bytes are preserved by rendering/mode changes; non-printables are
-  dots, selected newlines are purple blanks, EOF is `-`. No undo was added.
+  dots, selected newlines are purple blanks, EOF is `-`.
+- `HandleKey` wraps `DispatchKey` in BeginHistoryChange/EndHistoryChange, recording
+  actual file mutations as one editing-key transaction (including multi-byte
+  CR/LF operations). Navigation, dialogs, undo/redo and no-ops are excluded.
+  Root UNDO.INC owns 32 fixed 32-byte records plus a pending record (~1.1 KiB),
+  with 32-bit offset/size/cursor/revision IDs, old/new 0..2-byte spans and digit
+  positions. Current editing commands affect at most two bytes; full-file or
+  video snapshots are never stored. Appending a real edit truncates redo and
+  evicts the oldest record when full. Replay validates size/range/capacity
+  before mutation, replays overwrites in place, and reuses InsertByte/DeleteByte
+  for length changes under a replay guard. Cursor/digit selection is restored
+  compatibly with the current mode, then EnsureVisible normalizes/scrolls it.
+  MarkTextChanged still invalidates Text/search state during replay.
+- History revision IDs distinguish saved/unsaved branches. HistoryMarkSaved is
+  called only on successful SaveDocument completion; undo/redo to that saved
+  state clears dirty. Failed saves leave the saved marker unchanged; saving an
+  undone state retains redo. Identical manual content edits remain new states.
+  LoadFile resets history and marks successfully loaded data clean. Low-level
+  WriteByte calls outside an editing transaction/replay reset history (fixtures
+  and future external buffer changes cannot leave stale records). Direct
+  primitive calls are not user-history transactions; interactive HandleKey is.
 - `RenderTextValues` writes the bottom-right `HEX: XX  BIN: XXXXXXXX` field at
   zero-based row 24, columns 58..79: green labels/dark-purple values. It reads
   the selected byte directly; at EOF it can show `textLastByte` after successful
@@ -280,8 +313,9 @@ and an any-key return prompt with a yellow key label/dark-green description.
 The `helpLines` pointer table places one instruction/sentence on each row.
 `PutHelpLine` draws each string in its description colour, then highlights
 the key label before the colon using `ATTR_HELP_KEY`; sentences without a
-colon (the EOF note) stay light gray. The digit-input line uses a colon-delimited
-key label too.
+colon stay light gray. The EOF append explanation is now in the ASCII/Text
+description; F11/F12 use its former standalone row without enlarging the modal.
+The digit-input line uses a colon-delimited key label too.
 
 ## Build, execute, and test
 
@@ -308,6 +342,7 @@ F1 help, F2 save, F4 save-as, F5 binary, F6 hex, F7 Text; Tab toggles numeric/
 right-column ASCII in HEX/BIN or inserts a tab byte in Text. F8 goes to an
 absolute hexadecimal offset. Esc quits.
 F9 searches text/hex; F3 repeats the last search with forward wrap-around.
+F11 undoes and F12 redoes the last retained edit (32 changes total in memory).
 
 Unattended build/test, followed by independent host verification:
 
@@ -327,6 +362,8 @@ products, gates BUILD/TEST via TESTS/ALL.BAT, checks completion markers and
 linker logs, and records source/output hashes in local ignored VERIFIED.JSON.
 Plain VERIFY checks existing artifacts; --fresh additionally requires matching
 provenance. BUILD.OK/TEST.OK and Python cache files are ignored, not committed.
+The source manifest includes root UNDO.INC as well as test includes; HOSTTEST
+also checks that changing the undo source invalidates a fresh result.
 TEST.BAT requires a successful BUILD.BAT in the same DOS session.
 
 Prefer TASM output-directory syntax, e.g. `BINED3.ASM,BUILD\,BUILD\`.
@@ -335,7 +372,23 @@ with this bundled environment.
 
 ### Coverage and last verified results
 
-Latest verification: bright-red selected ASCII preview (2026-11-14), fresh
+Latest verification: F11/F12 undo/redo (2026-11-14), fresh RUN.PY production/
+core/release/byte/hash checks and all six HOSTTEST cases passed. TESTS/UNDO.INC
+covers HEX/BIN/ASCII edits, grouped Text CR/LF/Backspace/Delete/tab/zero edits,
+32-change eviction/all-level redo, no-op retention/new-edit branching, active
+mode/cursor/digit preservation, capacity rejection, 64-KiB deltas, successful/
+failed saves and reachable/unreachable savepoints, load reset and 1,000 extra
+four-key undo/redo cycles with unchanged SP. KEYDRIVE exercises actual enhanced
+BIOS F11/F12 input, empty history, all edit forms, search/dialog retention, redo
+branching and a savepoint round trip. Outputs remain exactly unchanged, and
+temporary UNDO.BIN is cleaned up. Runner provenance now includes root UNDO.INC;
+the sixth host negative case changes that include to verify stale rejection.
+For undo/redo commit packaging, VERIFY.PY --fresh and all six HOSTTEST cases
+were rerun successfully, and authored-file whitespace checks passed. Runtime
+DOS tests were not repeated for packaging; the preceding fresh undo-feature
+run remains the production/core/release runtime result.
+
+Bright-red ASCII preview verification (2026-11-14): fresh
 RUN.PY production/core/release/byte/hash checks and all five HOSTTEST cases
 passed. Updated selected-dot assertions to 0C2Eh in HEX/BIN; added printable
 Q = 0C51h in both layouts and gray 0751h after moving to EOF. Existing checks

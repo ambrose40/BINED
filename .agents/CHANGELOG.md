@@ -581,3 +581,50 @@ introduced on 2026-10-23.
   production/core/release palette-feature run.
 - **Remaining:** Commit/push completion is reported in the final response.
   The known DOSBox attribute-reporting limitation is unchanged.
+
+## 2026-11-14 — F11 undo and F12 redo with 32 in-memory changes
+
+- **Request:** Add F11 undo for up to 32 retained changes and F12 redo.
+- **Changes:** Added root UNDO.INC with compact 32-byte delta records, editing-
+  key transactions, grouped CR/LF/line joins, oldest-record eviction, redo
+  branching, bounded replay, cursor restoration and revision-based saved-state
+  tracking. HandleKey now wraps DispatchKey; non-edit/no-op input does not
+  consume history. Overwrites replay in place; length changes reuse DOS-owned
+  buffer shifts. Successful saves retain history/mark clean state, failed saves
+  preserve the marker, and loading/external raw writes reset stale history.
+  Main uses enhanced BIOS AH=10h to receive F11/F12. Updated F1 help/README and
+  both memory files; added TESTS/UNDO.INC, release F11/F12 keystrokes, root undo
+  source provenance and a sixth host freshness test. Rebuilt tracked artifacts
+  and recorded the published palette commit ee0632d. Debugging sources retained.
+- **Verification:** `python TESTS/RUN.PY` passed fresh warning-/error-free DOS
+  production/core/release builds, exact bytes, cleanup, logs and source/output
+  hashes. Core tests cover every edit form, CR/LF grouping, all 32 undo/redo
+  levels and eviction, no-ops/branching, dirty/clean savepoints and failed saves,
+  capacity failure without mutation, cross-64-KiB edits, load reset and 1,000
+  extra edit/undo/redo/undo cycles with stable SP. Release integration exercised
+  F11/F12 in HEX/BIN/ASCII/Text, empty history, search/dialog retention, a new-
+  edit redo branch and saves; final files are byte-for-byte unchanged. All six
+  `python TESTS/HOSTTEST.PY` cases passed, including stale UNDO.INC rejection.
+  Authored source/documentation whitespace check passed.
+- **Remaining:** None for this request. Existing DOSBox attribute-reporting
+  limitation remains; reduced-memory and launcher automation were not rerun.
+  No commit or push was requested for this changeset.
+
+## 2026-11-14 — Commit and push F11/F12 undo/redo
+
+- **Request:** Commit implemented changes and push upstream.
+- **Changes:** Prepared `feat(editor): add 32-level undo and redo on F11 and F12`
+  with production UNDO.INC, edit transactions/replay/savepoints, enhanced BIOS
+  input, help/README, core/release/TESTS/UNDO.INC regressions, undo-include
+  provenance checks, both updated memory files and tracked rebuilt artifacts.
+  Reviewed and updated memory before committing. Target: master -> origin/master
+  in ambrose40/BINED, starting at ee0632d.
+- **Verification:** Reviewed worktree, source/new includes/tests/docs, generated
+  logs/maps/undo listing entries, recent history and branch/remote tracking.
+  `python TESTS/VERIFY.PY --fresh` passed exact outputs, cleanup, build logs and
+  source/output hashes. `python TESTS/HOSTTEST.PY` passed all six negative cases.
+  Authored-file whitespace check passed. DOS runtime tests were not repeated
+  for this packaging-only task; the preceding entry records the passing fresh
+  production/core/release undo/redo tests and additional 4,000-event stack check.
+- **Remaining:** Commit/push completion is reported in the final response.
+  Existing DOSBox attribute-reporting limitation is unchanged.

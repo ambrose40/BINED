@@ -17,7 +17,7 @@ def main():
         "OPENERR.LOG",
     ):
         (build / name).unlink(missing_ok=True)
-    sources = [root / "BINED3.ASM", root / "BUILD.BAT"]
+    sources = [root / "BINED3.ASM", root / "UNDO.INC", root / "BUILD.BAT"]
     sources += sorted(p for p in (root / "TESTS").iterdir()
                       if p.suffix.upper() in {".ASM", ".INC", ".BAT", ".PY"})
     before = {p.relative_to(root).as_posix(): VERIFY.digest(p) for p in sources}

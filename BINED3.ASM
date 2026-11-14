@@ -174,8 +174,8 @@ helpText3       db 'Home / End: move to the row start / end.',0
 helpText4       db 'Ctrl-Home / Ctrl-End: move to file start / EOF.',0
 helpText5       db 'Ins / Del: insert 00 / delete the current byte.',0
 helpText6       db '0-9 / A-F (hex), 0 / 1 (binary): type to edit.',0
-helpText7       db 'ASCII / Text: overwrite / insert printable text.',0
-helpText8       db 'At EOF, typing appends a byte.',0
+helpText7       db 'ASCII/Text: overwrite/insert; typing at EOF appends.',0
+helpText8       db 'F11 / F12: undo / redo (32 changes).',0
 helpText9       db 'Space: next byte in numeric; text in ASCII/Text.',0
 helpText10      db 'Backspace: previous byte; deletes in Text.',0
 helpText11      db 'F2 / F4: save / save the file under a new name.',0
@@ -209,6 +209,12 @@ searchHexLabel  db 'HEX',0
 msgSearchFound  db 'Match found. F3 finds the next match.',0
 msgSearchWrapped db 'Match found (wrapped). F3 finds the next match.',0
 msgSearchMissing db 'Search pattern not found.',0
+msgUndone       db 'Undone. F12 redoes the change.',0
+msgRedone       db 'Redone. F11 undoes the change.',0
+msgNoUndo       db 'Nothing to undo.',0
+msgNoRedo       db 'Nothing to redo.',0
+msgUndoBounds   db 'Undo/redo cannot fit in the file buffer.',0
+msgUndoMismatch db 'Undo history no longer matches the document.',0
 quitText        db 'Unsaved changes: S = save and quit, D = discard, Esc = cancel',0
 msgReady        db 'F1 Help | Sizes/offsets are hex. EOF is an append position.',0
 msgNew          db 'New file. Type to append bytes, then F2 to save.',0
@@ -275,7 +281,7 @@ main_loaded:
 main_event_loop:
     call EnsureVisible
     call RenderScreen
-    xor ah,ah
+    mov ah,10h                    ; enhanced BIOS read includes F11/F12
     int 16h
     call HandleKey
     cmp quitRequested,0
@@ -367,6 +373,7 @@ ReadByte endp
 
 ; EAX = offset, DL = byte. Preserves all general registers.
 WriteByte proc
+    call HistoryExternalWrite
     call MarkTextChanged
     push ebx
     call MapBuffer
@@ -487,6 +494,7 @@ SkipTailSpaces endp
 ; uninitialized bytes or reporting incomplete saves as successful.
 ; ---------------------------------------------------------------------------
 LoadFile proc
+    call ResetUndoHistory
     mov searchHaveMatch,0
     call ResetTextCache
     mov dx,offset fileName
@@ -496,6 +504,8 @@ LoadFile proc
     cmp ax,2                       ; missing filename is a new document
     jne load_failed
     mov statusText,offset msgNew
+    mov dirty,0
+    call ResetUndoHistory
     clc
     ret
 load_opened:
@@ -522,6 +532,10 @@ load_opened:
     call TransferFile
     jc load_close_failed
     call CloseFile
+    jc load_failed
+    mov dirty,0
+    call ResetUndoHistory
+    clc
     ret
 load_too_large:
     mov ax,8
@@ -693,7 +707,7 @@ save_install:
     mov ah,41h
     DISK_INT                       ; deletion failure leaves a harmless backup
 save_success:
-    mov dirty,0
+    call HistoryMarkSaved
     mov statusText,offset msgSaved
     clc
     ret
@@ -750,6 +764,8 @@ RenameFile endp
 ; Editor operations. The byte buffer is the only source of truth. Drawing and
 ; switching modes never parse characters back out of the display.
 ; ---------------------------------------------------------------------------
+include UNDO.INC
+
 SetMode proc
     ; AL = 0 (hex), 1 (binary), 2 (ASCII in numeric view), or 3 (Text).
     mov editMode,al
@@ -2017,6 +2033,13 @@ EnsureVisible endp
 ; AX = BIOS key word. Each dispatch returns to its caller; no nested event
 ; loops, cross-procedure jumps into epilogues, recursion, or SP resets.
 HandleKey proc
+    call BeginHistoryChange
+    call DispatchKey
+    call EndHistoryChange
+    ret
+HandleKey endp
+
+DispatchKey proc
     mov textLastValid,0
     cmp al,0
     je key_check_vertical
@@ -2059,6 +2082,10 @@ key_text_input:
     call EditText
     ret
 key_extended:
+    cmp ah,85h
+    je key_undo
+    cmp ah,86h
+    je key_redo
     cmp ah,3Bh
     je key_help
     cmp ah,3Ch
@@ -2259,6 +2286,12 @@ key_search:
 key_search_next:
     call RepeatSearch
     ret
+key_undo:
+    call UndoChange
+    ret
+key_redo:
+    call RedoChange
+    ret
 key_insert:
     call InsertByte
     ret
@@ -2283,7 +2316,7 @@ key_help:
 key_quit:
     call QuitDialog
     ret
-HandleKey endp
+DispatchKey endp
 
 ; ---------------------------------------------------------------------------
 ; Screen output: 80x25, page zero, direct B800 writes. No display reads are

@@ -966,7 +966,9 @@ test_dispatch_loop:
     jne TestFailed
     cmp word ptr es:[9*160+13*2],0E30h ; yellow editable-digit key label
     jne TestFailed
-    cmp word ptr es:[11*160+13*2],0741h ; no-colon EOF sentence stays light gray
+    cmp word ptr es:[11*160+13*2],0E46h ; yellow F11/F12 undo/redo instruction
+    jne TestFailed
+    cmp word ptr es:[11*160+21*2],0E32h ; F12 label
     jne TestFailed
     cmp word ptr es:[10*160+13*2],0E41h ; yellow ASCII input label
     jne TestFailed
@@ -1214,6 +1216,8 @@ test_full_row_video_fill:
     jc TestFailed
     call TestSearch
     jc TestFailed
+    call TestUndoRedo
+    jc TestFailed
 
     mov testCase,offset caseFiles
     mov fileSize,20011h
@@ -1428,3 +1432,4 @@ include TESTS\CACHE.INC
 include TESTS\POLISH.INC
 include TESTS\GOTO.INC
 include TESTS\SEARCH.INC
+include TESTS\UNDO.INC

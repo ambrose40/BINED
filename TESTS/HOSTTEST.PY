@@ -37,6 +37,11 @@ class FreshnessTests(unittest.TestCase):
             stream.write(b"stale")
         self.check_rejected()
 
+    def test_changed_undo_include(self):
+        with (self.root / "UNDO.INC").open("a", encoding="ascii") as stream:
+            stream.write("\n; undo source changed after build\n")
+        self.check_rejected()
+
     def test_link_failure(self):
         (self.root / "BUILD/LINK.LOG").write_text("Turbo Link\nFatal: cannot create EXE\n", encoding="ascii")
         self.check_rejected()

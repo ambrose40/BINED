@@ -112,6 +112,7 @@ details.
 | F8 | Go to an absolute hexadecimal file offset |
 | F9 | Search for text or hexadecimal bytes |
 | F3 | Find the next occurrence of the last search pattern |
+| F11 / F12 | Undo / redo, up to 32 retained changes |
 | Enter in Text | Insert a DOS CR/LF line break (`0Dh 0Ah`) |
 | Left / Right | Previous / next hex digit, bit, or ASCII byte |
 | Up / Down | Previous / next row |
@@ -233,7 +234,7 @@ The numeric **Offset, Size, and Capacity values are dark purple**;
 the **bottom status line and Save As/unsaved-quit prompts are light gray**.
 F1 opens a centred, black-filled window
 with a purple border, one help instruction per line, bright-yellow key names
-contrasting with light-gray descriptions (including the EOF note), and an
+contrasting with light-gray descriptions (including EOF instructions), and an
 any-key dismissal prompt with a yellow key label and dark-green description.
 The editing cursor is hidden while help is open. All backgrounds stay
 black. The `ATTR_*` constants near the top of `BINED3.ASM` define the palette
@@ -249,7 +250,27 @@ ignored in the right-hand ASCII column. Text mode additionally inserts CR/LF
 and tabs; use numeric HEX/BIN for other control/high bytes. Insert/Delete change
 file length; ordinary typing overwrites in numeric/right-column ASCII modes
 and inserts in Text.
-Delete at EOF is a no-op. There is no undo command.
+Delete at EOF is a no-op.
+
+### Undo and redo
+
+**F11** undoes the most recent change; **F12** reapplies it. Up to **32 actual
+editing changes** are retained in memory, shared between undo and redo. Further
+edits discard the oldest retained change. Hex digits, binary bits, ASCII
+overwrites/appends, Text characters/tabs, Insert and Delete are supported.
+An Enter-inserted CR/LF pair or a Text line join is one complete change.
+
+Navigation, dialogs, invalid input, full-buffer rejection and overwriting an
+identical byte do not consume history. A new actual edit after Undo discards
+the redo branch. Undo/redo preserve the active view and ASCII/numeric focus,
+restore the edit's cursor position and a valid digit/bit selection, and scroll
+the result into view. Text uses its usual shared CR/LF cursor cell.
+
+Saving (including Save As) retains history and marks the saved history state.
+Undoing or redoing back to that state clears the modified flag; moving away
+sets it. A failed save does not move that marker. Manually editing bytes back
+to the same content is still a new history state. Loading a document resets
+history, and exiting discards it; undo data is never written into your file.
 
 ## Memory and CPU design
 
@@ -281,6 +302,10 @@ DGROUP holds only editor state and paths, never the file contents.
 - **Byte storage:** `MapBuffer`, `ReadByte`, `WriteByte`.
 - **Editing/navigation:** `EditDigit`, `EditAscii`, `EditText`, `InsertByte`,
   `DeleteByte`, `DeleteText`, `SetMode`, movement procedures, `EnsureVisible`.
+- **Undo:** production `UNDO.INC` wraps editing key transactions, retains compact
+  byte-range deltas/cursor/savepoint state, and replays them via `UndoChange`
+  and `RedoChange`. Numeric overwrites replay in place; length changes reuse
+  the bounded byte-shifting procedures.
 - **Text layout:** `NextTextRow`, `FindTextRow`, `TextColumn`,
   `TextOffsetAtColumn`, `TextLineOffset`, `TextVertical`, `EnsureTextVisible`.
 - **Input:** `HandleKey` dispatches one BIOS key and returns.
@@ -361,7 +386,8 @@ building, gates tests on build success, checks all assembler/linker results,
 and creates local `BUILD/VERIFIED.JSON` source/output SHA-256 provenance.
 `python TESTS\VERIFY.PY --fresh` rechecks that manifest; source or output changes
 invalidate it. Plain `VERIFY.PY` checks existing artifacts without claiming a
-fresh build. `HOSTTEST.PY` checks rejection of stale source/EXE, linker failure,
+fresh build. Fingerprints include the production `UNDO.INC` source.
+`HOSTTEST.PY` checks rejection of stale main/undo source or EXE, linker failure,
 missing completion, and missing manifests in temporary workspaces. Manual DOS
 build/test commands remain supported; `BUILD.OK` and `TEST.OK` mark success.
 
@@ -387,6 +413,10 @@ bytes, errors/correction/cancellation, overlapping and wrapped matches, misses,
 empty/short files, last-byte/64-KiB bounds, mode/focus and dirty-state retention,
 Text LF repeat progress, dialog colours/scrolling and linear scan work on
 repetitive 32-byte patterns. The engine uses a bounded KMP prefix table.
+Undo tests cover all editing forms, grouped CR/LF, 32-change eviction/full redo,
+redo branching and no-op retention, mode/cursor preservation, full-buffer
+rejection, cross-64-KiB edits, successful/failed saves and saved-state tracking,
+load reset, and 1,000 additional four-key edit/undo/redo/undo stack cycles.
 Test-only DOS interception also exercises failed/short writes, close failure,
 install-rename rollback, and failed restoration. It verifies original/recovery
 bytes and dirty state, then removes recovery fixtures. Release code contains
@@ -397,6 +427,7 @@ BIOS keystrokes for help, numeric/right-column ASCII editing, F5/F6/F7 mode
 selection, Tab focus toggling, full-screen Text with CR/LF/tab insertion,
 F8 acceptance/error/cancellation and focus preservation,
 F9 text/hex search, F3 wrap/repeat, search errors and cancellation,
+F11/F12 undo/redo in numeric/ASCII/Text views and across saves,
 Backspace/Delete, navigation, save-as and save-and-quit. The final UI output is
 `b"\xffz !? H\r\nText\r\n\tOK"`. `TEXT.BIN` independently round-trips
 `b"A\r\nB"` through production save/load procedures.
