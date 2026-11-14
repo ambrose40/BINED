@@ -20,6 +20,9 @@ PATH_BYTES      equ 128
 DATA_ROWS       equ 20
 DATA_TOP        equ 2
 DATA_COLUMN     equ 10
+TEXT_ROW_EOF    equ 0
+TEXT_ROW_WRAP   equ 1
+TEXT_KIND_BREAK equ 2
 HELP_LEFT       equ 11
 HELP_TOP        equ 2
 HELP_WIDTH      equ 58
@@ -92,6 +95,8 @@ textRowNext     dd 0
 textMoveRows    dd 0
 textLastByte    db 0
 textLastValid   db 0
+textRowWidth    dw 0
+textRowKind     db TEXT_ROW_EOF
 hexDigits       db '0123456789ABCDEF'
 titleText       db ' EZ Binary Editor 3 | 486 real mode | ',0
 hexText         db 'HEX',0
@@ -875,6 +880,7 @@ NextTextRow proc
     push esi
     mov esi,eax
     xor ecx,ecx
+    mov textRowKind,TEXT_ROW_EOF
 text_row_scan:
     cmp esi,fileSize
     jae text_row_end
@@ -892,11 +898,22 @@ text_row_character:
     inc esi
     cmp ecx,80
     jb text_row_scan
+    mov textRowKind,TEXT_ROW_WRAP
+    ; A newline immediately after a full row terminates that same row.
+    cmp esi,fileSize
+    jae text_row_end
+    mov eax,esi
+    call ReadByte
+    cmp al,13
+    je text_row_break
+    cmp al,10
+    je text_row_break
 text_row_end:
     mov edx,esi
     mov eax,esi
     jmp text_row_return
 text_row_break:
+    mov textRowKind,TEXT_KIND_BREAK
     mov edx,esi
     inc esi
     cmp al,13
@@ -911,6 +928,7 @@ text_row_break:
 text_row_next:
     mov eax,esi
 text_row_return:
+    mov textRowWidth,cx
     pop esi
     pop ecx
     pop ebx
@@ -964,6 +982,10 @@ text_find_column:
     call TextColumn
     pop edx
     mov eax,esi
+    cmp ecx,80
+    jb text_find_visible_column
+    mov ecx,79                    ; full-row newline shares the last cursor cell
+text_find_visible_column:
     pop edi
     pop esi
     ret
@@ -1141,10 +1163,8 @@ text_vertical_row:
     call TextLineOffset
     mov esi,eax
     call NextTextRow
-    cmp eax,edx
+    cmp textRowWidth,80
     jne text_vertical_column
-    cmp edx,fileSize
-    jae text_vertical_column
     dec edx                       ; wrap boundary belongs to the next row
 text_vertical_column:
     mov eax,esi
@@ -1442,15 +1462,9 @@ key_end:
     jne key_end_numeric
     mov eax,cursorOffset
     call FindTextRow
-    ; At a hard wrap, the boundary belongs to the following display row.
-    cmp edx,fileSize
-    je key_text_end
-    mov eax,edx
-    call ReadByte
-    cmp al,13
-    je key_text_end
-    cmp al,10
-    je key_text_end
+    ; Full rows end on their last character, including at EOF or before CR/LF.
+    cmp textRowWidth,80
+    jne key_text_end
     dec edx
 key_text_end:
     mov cursorOffset,edx
@@ -1847,6 +1861,10 @@ render_text_newline:
     cmp eax,cursorOffset
     jne render_text_advance
     mov al,' '
+    cmp renderColumn,80
+    jne render_text_marker_output
+    sub di,2
+    mov al,'<'                    ; selected full-width newline, no phantom row
 render_text_marker_output:
     mov ah,ATTR_NORMAL
     mov edx,textRowEnd

@@ -379,3 +379,20 @@ introduced on 2026-10-23.
   passing core/release and 94,000-event stress results are recorded above.
 - **Remaining:** Commit/push completion is reported in the final response.
   Existing DOSBox attribute-reporting limitation remains unchanged.
+
+## 2026-11-14 — Improvement 1: exact-width Text boundaries
+
+- **Request:** Implement the first of four improvement steps, update memory,
+  and make a corresponding commit before proceeding to the next step.
+- **Changes:** `BINED3.ASM` now absorbs newlines immediately following 80 display
+  columns, exposes parsed row width/kind, keeps End on a full row at EOF or
+  before a newline, and bounds newline cursors/rendering to column 79 with a
+  purple `<` marker. Added `TESTS/BOUNDS.INC` with a width/newline matrix and
+  exact-width tabs; extended core video assertions and README. Rebuilt tracked
+  BUILD artifacts; updated both project memory files before committing.
+- **Verification:** Bundled DOSBox production/core/release tests passed with
+  warning-/error-free TASM; Python exact-byte/log verification passed; authored
+  source/docs whitespace check passed. An initial TASM case-insensitive constant/
+  label collision was corrected before the successful run.
+- **Remaining:** Steps 2 (fresh builds/save failures), 3 (Text layout cache),
+  and 4 (navigation/viewport/status polish) follow as separate commits.

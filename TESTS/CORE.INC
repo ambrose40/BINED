@@ -6,6 +6,10 @@ testStack       dw 0
 testLoops       dw 0
 testCapacity    dd 0
 testAttrSkipped db 0
+boundaryLength  dd 0
+boundaryTerm    dw 0
+boundaryLengths dd 79,80,81,159,160,0
+boundaryIndex   dw 0
 testPath        db 'BUILD\TESTDATA\ROUND.BIN',0
 emptyPath       db 'BUILD\TESTDATA\EMPTY.BIN',0
 textPath        db 'BUILD\TESTDATA\TEXT.BIN',0
@@ -40,6 +44,7 @@ caseTextVideo   db 'full-screen Text colours, wrapping, scrolling and values',13
 caseTextTyped   db 'Text selected/typed byte inspector and EOF',13,10,'$'
 caseTextWrap    db 'Text hard wrapping and screen bounds',13,10,'$'
 caseTextLines   db 'Text empty-line scrolling and empty document',13,10,'$'
+caseTextEdges   db '79/80/81/159/160-column EOF/newline/tab boundaries',13,10,'$'
 caseBoundary    db 'insert/delete across 64 KiB boundaries',13,10,'$'
 caseFull        db 'full-buffer and empty-file bounds',13,10,'$'
 caseNavigation  db 'navigation and viewport bounds',13,10,'$'
@@ -369,6 +374,9 @@ test_ascii_printable:
     mov ax,4000h
     call HandleKey
 
+    mov testCase,offset caseText
+    call TestTextBoundaries
+    jc TestFailed
     mov testCase,offset caseText
     mov fileSize,0
     mov cursorOffset,0
@@ -1131,6 +1139,32 @@ test_text_empty_lines:
     call RenderScreen
     cmp word ptr es:[2*160],0D2Dh ; empty Text buffer still has an editing cursor
     jne TestFailed
+    mov fileSize,83
+    xor esi,esi
+test_full_row_video_fill:
+    mov eax,esi
+    mov dl,'A'
+    call WriteByte
+    inc esi
+    cmp esi,80
+    jb test_full_row_video_fill
+    mov eax,80
+    mov dl,13
+    call WriteByte
+    mov eax,81
+    mov dl,10
+    call WriteByte
+    mov eax,82
+    mov dl,'B'
+    call WriteByte
+    mov cursorOffset,80
+    mov viewOffset,0
+    call EnsureVisible
+    call RenderScreen
+    cmp word ptr es:[2*160+79*2],0D3Ch ; full-width CR marker stays on screen
+    jne TestFailed
+    cmp word ptr es:[3*160],0A42h ; B immediately follows the full-width row
+    jne TestFailed
     cmp word ptr es:[4000],0A55Ah
     jne TestFailed
     call EndVideo
@@ -1342,3 +1376,5 @@ test_verify_bad:
     stc
     ret
 TestVerifyPattern endp
+
+include TESTS\BOUNDS.INC

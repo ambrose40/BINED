@@ -91,6 +91,9 @@ to `31cf0c4`. The full-screen Text feature is prepared for
 `feat(editor): add full-screen text editing and byte inspector`, including
 corrected controls, help, README/memory, core/release/host tests, rebuilt tracked
 BUILD artifacts, and the new exact-byte `BUILD/TESTDATA/TEXT.BIN` fixture.
+That Text feature was completed and pushed as `b9611da`. The user subsequently
+requested four sequential improvement steps, each verified, memory-updated,
+and committed separately; no push was requested for these improvement commits.
 
 ## Architecture and invariants
 
@@ -131,6 +134,11 @@ BUILD artifacts, and the new exact-byte `BUILD/TESTDATA/TEXT.BIN` fixture.
   hardware cursor's row/column. CR/LF and a tab expansion each have one cursor
   position; tabs use 8-column stops. Up/Down/PgUp/PgDn preserve the current
   column where possible, clamping to shorter rows; Home/End use display rows.
+  Exact-width rows absorb an immediately following CR/LF, CR, or LF, so no
+  phantom blank row is created. `textRowWidth`/`textRowKind` expose the parsed
+  row's boundary. Full-row End stays on its last byte, including at EOF.
+  A selected full-width newline uses a purple `<` in column 79; its raw offset
+  and inspector value still refer to the newline. Cursor columns stay 0..79.
 - `EditText` inserts printable characters and tabs rather than overwriting;
   Enter inserts `0Dh 0Ah` only if both bytes fit. `InsertTextCharacter` reuses
   DOS-owned byte storage/shifting. Backspace deletes the preceding character;
@@ -247,6 +255,11 @@ Explicit existing `.OBJ` output paths produced a repeat-build path issue
 with this bundled environment.
 
 ### Coverage and last verified results
+
+Latest verification: improvement step 1 (2026-11-14), warning-free production/
+core/release DOS build/tests and host verification passed. `TESTS/BOUNDS.INC`
+adds 79/80/81/159/160-column EOF/CR/LF/CR-LF cases and exact-width tabs; video
+checks cover the full-width newline marker and immediately following text.
 
 Last runtime verification was the full-screen Text/CR-LF/tab changeset on
 2026-11-14, including the corrected F5/F6/F7/Tab bindings.
