@@ -7,6 +7,7 @@ testLoops       dw 0
 testCapacity    dd 0
 testAttrSkipped db 0
 textRowScans    dd 0
+searchReadCount dd 0
 cacheTarget     dd 0
 cacheExpected   dd 4 dup (0)
 boundaryLength  dd 0
@@ -949,6 +950,8 @@ test_dispatch_loop:
     jne TestFailed
     cmp word ptr es:[10*160+13*2],0E41h ; yellow ASCII input label
     jne TestFailed
+    cmp word ptr es:[15*160+14*2],0E39h ; yellow F9 search key
+    jne TestFailed
     cmp word ptr es:[17*160+14*2],0E37h ; yellow F7 mode key
     jne TestFailed
     cmp word ptr es:[18*160+14*2],0E38h ; yellow F8 Go to offset key
@@ -1181,11 +1184,15 @@ test_full_row_video_fill:
     jc TestFailed
     call TestGotoVideo
     jc TestFailed
+    call TestSearchVideo
+    jc TestFailed
     call EndVideo
     mov videoActive,0
     call TestSaveFailures
     jc TestFailed
     call TestGotoOffset
+    jc TestFailed
+    call TestSearch
     jc TestFailed
 
     mov testCase,offset caseFiles
@@ -1400,3 +1407,4 @@ include TESTS\SAVEFAIL.INC
 include TESTS\CACHE.INC
 include TESTS\POLISH.INC
 include TESTS\GOTO.INC
+include TESTS\SEARCH.INC

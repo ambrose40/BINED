@@ -497,3 +497,51 @@ introduced on 2026-10-23.
   F8 entry records the passing fresh production/core/release run.
 - **Remaining:** Commit/push completion is reported in the final response.
   The known DOSBox mounted-drive attribute-reporting limitation is unchanged.
+
+## 2026-11-14 — F9 text/hex search and F3 Find Next
+
+- **Request:** Add higher-level search convenience using F9.
+- **Changes:** Added F9 TEXT/HEX search with Tab type selection, Enter, Backspace,
+  Esc, errors and horizontally scrolling bounded input; F3 and empty Enter
+  repeat the accepted query. Exact text and compact/spaced HEX support up to
+  32 bytes. A bounded KMP prefix table provides linear forward scans, one wrap,
+  overlapping matches and 64-KiB-safe access without circular EOF matches.
+  Success preserves mode/focus and navigates to the first matching byte; misses
+  retain position/digit/view and all searches retain data/dirty state. Separate
+  draft/candidate/history buffers protect saved queries, and raw LF match
+  anchors prevent repeated Text-mode normalization from getting stuck. Added
+  SEARCH.INC and release F9/F3 keystrokes, updated F1 help/README/both memory
+  files and rebuilt tracked artifacts. Recorded published F8 commit a98f596.
+- **Verification:** `python TESTS/RUN.PY` passed fresh warning-/error-free DOS
+  production/core/release, exact outputs, staging cleanup and source/output
+  hashes. `python TESTS/HOSTTEST.PY` passed all five negative cases. Search
+  regressions cover text case, hex syntax/control bytes/32-byte limits, errors,
+  correction/cancellation/history, overlapping/wrapped/missing matches, empty/
+  short/EOF/64-KiB bounds, five mode/focus states, clean/dirty flags, Text LF
+  repeat progress, colours/scrolling/SP and linear work on repetitive patterns.
+  Release integration searched/replaced identical bytes, repeated/wrapped,
+  cancelled at a low hex nibble, corrected invalid hex, and retained the saved
+  query after cancellation; host output remained exactly unchanged. Authored
+  source/documentation whitespace check passed.
+- **Remaining:** None for this request. Existing DOSBox attribute-reporting
+  limitation remains; reduced-memory/launcher automation were not rerun. No
+  commit or push was requested. Preserved debugging sources remain intact.
+
+## 2026-11-14 — Commit and push F9/F3 search
+
+- **Request:** Commit implemented changes and push upstream.
+- **Changes:** Prepared `feat(editor): add F9 text and hex search with find next`
+  with TEXT/HEX search, KMP scanning, wrap/repeat/history behavior, F1 help,
+  README, core/release/SEARCH.INC regressions and tracked rebuilt BUILD artifacts.
+  Reviewed and updated both project memory files before committing. The target
+  is master -> origin/master in ambrose40/BINED, starting at a98f596. Separate
+  untracked DOSBox runtime logs are excluded from the feature commit.
+- **Verification:** Reviewed worktree, source/test/docs and generated log/map/
+  listing changes, recent history, branch tracking and remote URL. Reran
+  `python TESTS/VERIFY.PY --fresh` successfully for exact bytes, staging cleanup,
+  build logs and source/output hashes; `python TESTS/HOSTTEST.PY` passed all
+  five negative cases. Authored-file whitespace check passed. DOS runtime tests
+  were not repeated for this packaging-only task; the preceding search entry
+  records the passing fresh production/core/release run.
+- **Remaining:** Commit/push completion is reported in the final response.
+  Existing DOSBox mounted-drive attribute-reporting limitation is unchanged.

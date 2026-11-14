@@ -110,6 +110,8 @@ details.
 | F5 / F6 | Binary / hex view with digit/bit editing |
 | F7 | Full-screen Text editor |
 | F8 | Go to an absolute hexadecimal file offset |
+| F9 | Search for text or hexadecimal bytes |
+| F3 | Find the next occurrence of the last search pattern |
 | Enter in Text | Insert a DOS CR/LF line break (`0Dh 0Ah`) |
 | Left / Right | Previous / next hex digit, bit, or ASCII byte |
 | Up / Down | Previous / next row |
@@ -147,6 +149,34 @@ values leave the dialog open with an explanatory message. A successful jump
 selects the first digit/bit of the requested byte and scrolls it into view,
 preserving HEX/BIN/ASCII/Text mode and ASCII-column focus. Text mode uses its
 existing shared CR/LF cursor cell: targeting the LF of a CR/LF pair selects CR.
+
+### Search
+
+Press **F9** to open search. Inside the dialog, **Tab** switches **TEXT/HEX**,
+**Enter** searches, **Backspace** corrects input, and **Esc** cancels. The first
+search defaults to HEX in numeric HEX/BIN editing and TEXT in an ASCII column
+or Text mode; later dialogs remember the last accepted search type.
+
+- **TEXT:** 1–32 printable ASCII characters, matched exactly and case-sensitively.
+  Spaces are literal search characters.
+- **HEX:** 1–32 bytes as complete hexadecimal pairs, with optional spaces
+  between pairs. For example, `41 42 00 FF` and `414200ff` search the same four
+  bytes. Use HEX for tabs (`09`), CR/LF (`0D0A`), zeroes, and non-ASCII bytes.
+
+A new pattern searches from the selected byte through EOF, then wraps once to
+the beginning. **F3**, or **Enter on an empty F9 field**, repeats the previous
+search starting after the current match; overlapping matches are supported.
+The cursor selects the first matching byte and scrolls into view, preserving
+the current mode and ASCII-column focus. Status text reports a match, wrapping,
+or no match. Search does not modify bytes or the modified flag, and a miss
+preserves the cursor, viewport and digit selection.
+
+Malformed/oversized input stays in the dialog with an explanation. Cancelling
+or entering invalid input preserves the previous query; a valid query is saved
+even when no match is found. Long HEX input scrolls horizontally within its
+field. The search scans actual file bytes (including across 64 KiB), never
+joining EOF to the beginning as if file data were circular. Text mode retains
+its shared CR/LF cursor cell while Find Next advances past the raw matched LF.
 
 ### Full-screen Text editing
 
@@ -350,6 +380,11 @@ Text insert/newline/backspace stress check preserves SP over 4,000 key events.
 F8 checks cover strict 32-bit hexadecimal parsing, EOF/empty-file/range bounds,
 Backspace correction, cancellation, cross-64-KiB jumps, visibility and unchanged
 data/dirty state in every mode/focus, shared Text CR/LF cells, and prompt colours.
+F9/F3 checks cover case-sensitive text, compact/spaced/max-length HEX, zero/high
+bytes, errors/correction/cancellation, overlapping and wrapped matches, misses,
+empty/short files, last-byte/64-KiB bounds, mode/focus and dirty-state retention,
+Text LF repeat progress, dialog colours/scrolling and linear scan work on
+repetitive 32-byte patterns. The engine uses a bounded KMP prefix table.
 Test-only DOS interception also exercises failed/short writes, close failure,
 install-rename rollback, and failed restoration. It verifies original/recovery
 bytes and dirty state, then removes recovery fixtures. Release code contains
@@ -359,6 +394,7 @@ direct DOS interrupts and no fault-injection code.
 BIOS keystrokes for help, numeric/right-column ASCII editing, F5/F6/F7 mode
 selection, Tab focus toggling, full-screen Text with CR/LF/tab insertion,
 F8 acceptance/error/cancellation and focus preservation,
+F9 text/hex search, F3 wrap/repeat, search errors and cancellation,
 Backspace/Delete, navigation, save-as and save-and-quit. The final UI output is
 `b"\xffz !? H\r\nText\r\n\tOK"`. `TEXT.BIN` independently round-trips
 `b"A\r\nB"` through production save/load procedures.

@@ -33,6 +33,8 @@ TEXT_ROW_EOF    equ 0
 TEXT_ROW_WRAP   equ 1
 TEXT_KIND_BREAK equ 2
 TEXT_CACHE_ROWS equ 128
+SEARCH_BYTES    equ 32
+SEARCH_INPUT_MAX equ 96
 ERROR_LEFT      equ 1
 ERROR_TOP       equ 5
 ERROR_WIDTH     equ 78
@@ -106,6 +108,22 @@ gotoInput       db 10 dup (0)       ; nine visible chars + terminator, parsed as
 gotoLength      dw 0
 gotoDone        db 0               ; 0 = editing, 1 = accepted, 2 = cancelled
 gotoError       dw 0
+searchInput     db SEARCH_INPUT_MAX+1 dup (0)
+searchInputLength dw 0
+searchType      db 0               ; 0 = exact, case-sensitive ASCII; 1 = hex bytes
+searchSavedType db 0
+searchDone      db 0               ; 0 = editing, 1 = searched, 2 = cancelled
+searchError     dw 0
+searchCandidate db SEARCH_BYTES dup (0)
+searchCandidateLength dw 0
+searchPattern   db SEARCH_BYTES dup (0)
+searchLength    dw 0
+searchPrefix    dw SEARCH_BYTES dup (0)
+searchStart     dd 0
+searchWrapped   db 0
+searchHaveMatch db 0
+searchLastMatch dd 0               ; raw byte position, before Text CR/LF normalization
+searchCursorAtMatch dd 0
 textCursorRow   dw 0
 textCursorCol   dw 0
 textAbsoluteLine dd 0
@@ -159,8 +177,8 @@ helpText7       db 'ASCII / Text: overwrite / insert printable text.',0
 helpText8       db 'At EOF, typing appends a byte.',0
 helpText9       db 'Space: next byte in numeric; text in ASCII/Text.',0
 helpText10      db 'Backspace: previous byte; deletes in Text.',0
-helpText11      db 'F2: save the file.',0
-helpText12      db 'F4: save the file under a new name.',0
+helpText11      db 'F2 / F4: save / save the file under a new name.',0
+helpText12      db 'F9 / F3: search (Tab TEXT/HEX) / next, wraps.',0
 helpText13      db 'F5 / F6: switch to binary / hex digit editing.',0
 helpText14      db 'F7: full-screen Text editing (Enter inserts CR/LF).',0
 helpText15      db 'F8: go to a hex file offset (EOF allowed).',0
@@ -179,6 +197,17 @@ gotoInvalid     db 'Enter 1-8 hex digits (0-9, A-F). Backspace corrects; Esc can
 gotoRange       db 'Offset is beyond EOF. Correct it or press Esc to cancel.',0
 gotoEOFText     db 'EOF: ',0
 gotoCurrentText db 'Current: ',0
+searchPrompt    db 'Search: Enter finds (empty repeats), Tab TEXT/HEX, Esc cancels.',0
+searchTextError db 'TEXT: enter 1-32 printable characters (case-sensitive).',0
+searchHexError  db 'HEX: enter 1-32 byte pairs, e.g. 41 42 00 or 414200.',0
+searchSizeError db 'Search input is too long. Backspace corrects; Esc cancels.',0
+searchNoPrevious db 'No previous search. Enter a pattern first.',0
+searchModeLabel db 'Mode: ',0
+searchTextLabel db 'TEXT',0
+searchHexLabel  db 'HEX',0
+msgSearchFound  db 'Match found. F3 finds the next match.',0
+msgSearchWrapped db 'Match found (wrapped). F3 finds the next match.',0
+msgSearchMissing db 'Search pattern not found.',0
 quitText        db 'Unsaved changes: S = save and quit, D = discard, Esc = cancel',0
 msgReady        db 'F1 Help | Sizes/offsets are hex. EOF is an append position.',0
 msgNew          db 'New file. Type to append bytes, then F2 to save.',0
@@ -457,6 +486,7 @@ SkipTailSpaces endp
 ; uninitialized bytes or reporting incomplete saves as successful.
 ; ---------------------------------------------------------------------------
 LoadFile proc
+    mov searchHaveMatch,0
     call ResetTextCache
     mov dx,offset fileName
     mov ax,3D00h
@@ -929,6 +959,7 @@ DeleteByte endp
 
 ; EAX changed byte -> lazy cache invalidation. Preserve all general registers.
 MarkTextChanged proc
+    mov searchHaveMatch,0
     mov textGoalValid,0
     cmp eax,textDirtyOffset
     jae text_changed_done
@@ -1492,6 +1523,339 @@ left_done:
     ret
 MoveLeft endp
 
+; F9 draft input is independent of the last committed pattern (Esc is non-destructive).
+ResetSearchInput proc
+    mov searchInput,0
+    mov searchInputLength,0
+    mov searchDone,0
+    mov searchError,0
+    mov al,searchSavedType
+    cmp searchLength,0
+    jne search_default_ready
+    xor al,al
+    cmp viewMode,2
+    je search_default_ready
+    cmp editMode,2
+    je search_default_ready
+    mov al,1
+search_default_ready:
+    mov searchType,al
+    ret
+ResetSearchInput endp
+
+; Validate draft into a separate byte buffer. Hex spaces are allowed between pairs.
+ParseSearchPattern proc
+    mov searchCandidateLength,0
+    mov cx,searchInputLength
+    jcxz search_parse_empty
+    cmp cx,SEARCH_INPUT_MAX-1
+    ja search_parse_size
+    mov si,offset searchInput
+    cmp searchType,0
+    jne search_parse_hex
+    cmp cx,SEARCH_BYTES
+    ja search_parse_text_bad
+    mov searchCandidateLength,cx
+    mov di,offset searchCandidate
+search_parse_text:
+    lodsb
+    cmp al,20h
+    jb search_parse_text_bad
+    cmp al,7Eh
+    ja search_parse_text_bad
+    mov [di],al
+    inc di
+    loop search_parse_text
+    clc
+    ret
+search_parse_hex:
+    xor bx,bx
+    xor dx,dx                     ; DL byte under construction, DH pending nibble
+search_parse_hex_next:
+    jcxz search_parse_hex_end
+    lodsb
+    dec cx
+    cmp al,' '
+    je search_parse_separator
+    call AsciiToHex
+    jc search_parse_hex_bad
+    shl dl,4
+    or dl,al
+    xor dh,1
+    jnz search_parse_hex_next
+    cmp bx,SEARCH_BYTES
+    jae search_parse_hex_bad
+    mov searchCandidate[bx],dl
+    inc bx
+    xor dl,dl
+    jmp search_parse_hex_next
+search_parse_separator:
+    test dh,dh
+    jnz search_parse_hex_bad
+    jmp search_parse_hex_next
+search_parse_hex_end:
+    test dh,dh
+    jnz search_parse_hex_bad
+    test bx,bx
+    jz search_parse_hex_bad
+    mov searchCandidateLength,bx
+    clc
+    ret
+search_parse_empty:
+    mov searchError,offset searchNoPrevious
+    stc
+    ret
+search_parse_size:
+    mov searchError,offset searchSizeError
+    stc
+    ret
+search_parse_text_bad:
+    mov searchError,offset searchTextError
+    stc
+    ret
+search_parse_hex_bad:
+    mov searchError,offset searchHexError
+    stc
+    ret
+ParseSearchPattern endp
+
+; Prefix lengths for KMP: search work is linear even for repetitive patterns.
+BuildSearchPrefix proc
+    mov searchPrefix,0
+    mov si,1
+    mov di,2
+    xor bx,bx
+search_prefix_next:
+    cmp si,searchLength
+    jae search_prefix_done
+    mov al,searchPattern[si]
+search_prefix_compare:
+    cmp al,searchPattern[bx]
+    je search_prefix_match
+    test bx,bx
+    jz search_prefix_store
+    mov bp,bx
+    dec bp
+    shl bp,1
+    mov bx,ds:searchPrefix[bp]
+    jmp search_prefix_compare
+search_prefix_match:
+    inc bx
+search_prefix_store:
+    mov searchPrefix[di],bx
+    inc si
+    add di,2
+    jmp search_prefix_next
+search_prefix_done:
+    ret
+BuildSearchPrefix endp
+
+CommitSearchPattern proc
+    mov cx,searchCandidateLength
+    mov searchLength,cx
+    mov si,offset searchCandidate
+    mov di,offset searchPattern
+search_commit_byte:
+    lodsb
+    mov [di],al
+    inc di
+    loop search_commit_byte
+    mov al,searchType
+    mov searchSavedType,al
+    mov searchHaveMatch,0
+    call BuildSearchPrefix
+    ret
+CommitSearchPattern endp
+
+; EAX start byte, EDX exclusive end byte -> EAX match start, CF if absent.
+; All accesses use the DOS-owned buffer and stay below fileSize.
+SearchSegment proc
+    mov esi,eax
+    xor bx,bx
+search_segment_next:
+    cmp esi,edx
+    jae search_segment_absent
+    mov eax,esi
+    call ReadByte
+IFDEF BINED_TEST
+    inc searchReadCount
+ENDIF
+search_segment_compare:
+    cmp al,searchPattern[bx]
+    je search_segment_match
+    test bx,bx
+    jz search_segment_advance
+    mov bp,bx
+    dec bp
+    shl bp,1
+    mov bx,ds:searchPrefix[bp]
+    jmp search_segment_compare
+search_segment_match:
+    inc bx
+    cmp bx,searchLength
+    jne search_segment_advance
+    lea eax,[esi+1]
+    movzx ecx,searchLength
+    sub eax,ecx
+    clc
+    ret
+search_segment_advance:
+    inc esi
+    jmp search_segment_next
+search_segment_absent:
+    stc
+    ret
+SearchSegment endp
+
+; EAX first candidate offset. Search to EOF, then earlier candidates once.
+; A match can cross the starting offset or 64 KiB, but never physical EOF.
+FindSearchPattern proc
+    mov searchStart,eax
+    mov searchWrapped,0
+    movzx edx,searchLength
+    test edx,edx
+    jz search_pattern_absent
+    cmp edx,fileSize
+    ja search_pattern_absent
+    mov ecx,fileSize
+    sub ecx,edx
+    cmp eax,ecx
+    ja search_pattern_wrap
+    mov edx,fileSize
+    call SearchSegment
+    jnc search_pattern_return
+search_pattern_wrap:
+    mov edx,searchStart
+    test edx,edx
+    jz search_pattern_absent
+    movzx ecx,searchLength
+    add edx,ecx
+    dec edx
+    cmp edx,fileSize
+    jbe search_pattern_wrap_end
+    mov edx,fileSize
+search_pattern_wrap_end:
+    mov searchWrapped,1
+    xor eax,eax
+    call SearchSegment
+search_pattern_return:
+    ret
+search_pattern_absent:
+    stc
+    ret
+FindSearchPattern endp
+
+; Search and navigate only on success. A miss never changes position/selection.
+RunSearch proc
+    mov searchHaveMatch,0
+    call FindSearchPattern
+    jc search_run_missing
+    mov searchLastMatch,eax
+    mov digitIndex,0
+    mov textGoalValid,0
+    mov textLastValid,0
+    call SetCursor
+    call EnsureVisible
+    mov eax,cursorOffset
+    mov searchCursorAtMatch,eax
+    mov searchHaveMatch,1
+    mov statusText,offset msgSearchFound
+    cmp searchWrapped,0
+    je search_run_done
+    mov statusText,offset msgSearchWrapped
+search_run_done:
+    mov searchDone,1
+    mov searchError,0
+    clc
+    ret
+search_run_missing:
+    mov statusText,offset msgSearchMissing
+    mov searchDone,1
+    mov searchError,0
+    stc
+    ret
+RunSearch endp
+
+RepeatSearch proc
+    cmp searchLength,0
+    je search_repeat_empty
+    mov eax,cursorOffset
+    cmp searchHaveMatch,0
+    je search_repeat_start
+    cmp eax,searchCursorAtMatch
+    jne search_repeat_start
+    mov eax,searchLastMatch        ; do not rediscover a Text-normalized LF forever
+search_repeat_start:
+    inc eax
+    jmp RunSearch
+search_repeat_empty:
+    mov statusText,offset searchNoPrevious
+    stc
+    ret
+RepeatSearch endp
+
+AcceptSearch proc
+    cmp searchInputLength,0
+    jne search_accept_new
+    cmp searchLength,0
+    jne RepeatSearch
+    mov searchError,offset searchNoPrevious
+    stc
+    ret
+search_accept_new:
+    call ParseSearchPattern
+    jc search_accept_done
+    call CommitSearchPattern
+    mov eax,cursorOffset          ; a new search includes the selected byte
+    call RunSearch
+search_accept_done:
+    ret
+AcceptSearch endp
+
+HandleSearchKey proc
+    cmp al,27
+    je search_key_cancel
+    cmp al,13
+    je AcceptSearch
+    cmp al,9
+    je search_key_type
+    cmp al,8
+    je search_key_backspace
+    cmp al,20h
+    jb search_key_done
+    cmp al,7Eh
+    ja search_key_done
+    mov bx,searchInputLength
+    cmp bx,SEARCH_INPUT_MAX
+    jae search_key_limit
+    mov searchInput[bx],al
+    inc bx
+    mov searchInput[bx],0
+    mov searchInputLength,bx
+    mov searchError,0
+search_key_done:
+    ret
+search_key_limit:
+    mov searchError,offset searchSizeError
+    ret
+search_key_cancel:
+    mov searchDone,2
+    ret
+search_key_type:
+    xor searchType,1
+    mov searchError,0
+    ret
+search_key_backspace:
+    mov bx,searchInputLength
+    test bx,bx
+    jz search_key_done
+    dec bx
+    mov searchInput[bx],0
+    mov searchInputLength,bx
+    mov searchError,0
+    ret
+HandleSearchKey endp
+
 ; DS:SI zero-terminated hexadecimal offset -> EAX, CF on empty/invalid/>8 digits.
 ; Parse into EDX so character conversion cannot corrupt the accumulator's AL.
 ParseHexOffset proc
@@ -1698,6 +2062,8 @@ key_extended:
     je key_help
     cmp ah,3Ch
     je key_save
+    cmp ah,3Dh
+    je key_search_next
     cmp ah,3Eh
     je key_save_as
     cmp ah,3Fh
@@ -1708,6 +2074,8 @@ key_extended:
     je key_text_mode
     cmp ah,42h
     je key_goto
+    cmp ah,43h
+    je key_search
     cmp ah,4Bh
     je key_left
     cmp ah,4Dh
@@ -1883,6 +2251,12 @@ key_text_mode:
     ret
 key_goto:
     call GotoDialog
+    ret
+key_search:
+    call SearchDialog
+    ret
+key_search_next:
+    call RepeatSearch
     ret
 key_insert:
     call InsertByte
@@ -2786,6 +3160,64 @@ goto_dialog_next:
     je goto_dialog_next
     ret                           ; Main restores the editor screen/cursor
 GotoDialog endp
+
+RenderSearchDialog proc
+    mov si,offset searchPrompt
+    cmp searchError,0
+    je search_prompt_ready
+    mov si,searchError
+search_prompt_ready:
+    call DialogPrompt
+    push es
+    mov ax,0B800h
+    mov es,ax
+    mov di,24*160
+    mov si,offset searchInput
+    mov bx,searchInputLength
+    cmp bx,48
+    jbe search_input_visible
+    sub bx,48
+    add si,bx
+search_input_visible:
+    mov cx,48
+    mov ah,ATTR_SELECTED
+    call PutLimitedString
+    mov di,24*160 + 52*2
+    mov si,offset searchModeLabel
+    mov ah,ATTR_STATUS
+    call PutString
+    mov si,offset searchTextLabel
+    cmp searchType,0
+    je search_mode_label_ready
+    mov si,offset searchHexLabel
+search_mode_label_ready:
+    mov ah,ATTR_MODE
+    call PutString
+    pop es
+    mov ax,searchInputLength
+    cmp ax,48
+    jbe search_input_cursor
+    mov ax,48
+search_input_cursor:
+    mov dx,1800h
+    mov dl,al
+    xor bh,bh
+    mov ah,02h
+    int 10h
+    ret
+RenderSearchDialog endp
+
+SearchDialog proc
+    call ResetSearchInput
+search_dialog_next:
+    call RenderSearchDialog
+    xor ah,ah
+    int 16h
+    call HandleSearchKey
+    cmp searchDone,0
+    je search_dialog_next
+    ret
+SearchDialog endp
 
 SaveAsDialog proc
     mov dialogLength,0

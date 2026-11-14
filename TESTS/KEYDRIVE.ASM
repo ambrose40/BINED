@@ -110,12 +110,15 @@ fcb2Segment     dw 0
 commandTail     db tailEnd - tailText
 tailText        db ' BUILD\TESTDATA\UI.BIN'
 tailEnd         db 13
-passedText      db 'PASS: release EXE HEX/BIN/ASCII/Text, CR/LF, help and save.',13,10,'$'
+passedText      db 'PASS: release EXE editing, F8/F9/F3, errors, help and save.',13,10,'$'
 failedText      db 'FAIL: release EXE integration test.',13,10,'$'
 keys:
+    dw 3D00h,4300h,13,27         ; F3 without a pattern; empty F9 error and cancel
     dw 4200h,'0',13               ; F8 accepts zero in an empty document
     dw 3B00h,0078h                ; F1, x: help and dismissal
     dw 0034h,0031h,0034h,0032h   ; hex 41 42
+    dw 4300h,'4','2',13,'4','2'  ; F9 hex finds B; rewrite the same byte
+    dw 3D00h,'4','2'             ; F3 wraps and finds that byte again
     dw 3F00h,7700h               ; binary, Ctrl-Home
     dw 0030h,0031h,0030h,0030h   ; first byte -> 01000011 (43)
     dw 0030h,0030h,0031h,0031h
@@ -127,7 +130,8 @@ keys:
     dw 'U','I','2','.','B','I','N',13
     dw 003Fh                     ; invalid hex character: ignored
     dw 4200h,'F','F','F','F','F','F','F','F',13,27 ; out-of-range stays open
-    dw 'F',4200h,27,'F'          ; cancelled F8 preserves the selected low nibble
+    dw 'F',4200h,27,4300h,27,'F' ; cancelled F8/F9 preserve the selected low nibble
+    dw 4300h,'0','G',13,8,'0',13 ; invalid hex corrected to 00; miss preserves cursor
     dw 0009h                     ; Tab ASCII: cursor already at byte 1
     dw 4200h,'1',13              ; F8 retains HEX's right-column ASCII focus
     dw 'z',' ','!'               ; overwrite then append: FF 7A 20 21
@@ -143,6 +147,11 @@ keys:
     dw 'H'                      ; append in hex ASCII focus
     dw 4100h                    ; F7 -> full-screen Text
     dw 13,'T','e','x','t',13,9,'O','k',8,'K' ; CR/LF, tabulation, Backspace
+    dw 4300h,9,'T','e','x','t',13,5300h,'T' ; text search and same-byte replacement
+    dw 3D00h,5300h,'T'          ; repeat wraps, keeping Text insertion mode
+    dw 4300h,9,'0','9',13,5300h,9 ; hex search finds tab; replace with an actual tab
+    dw 4300h,9,'X','Y','Z',27    ; cancellation retains the saved 09 query
+    dw 3D00h,5300h,9             ; repeat that query and replace the tab again
     dw 4200h,'1','0',13,'X',8    ; Text goto byte 10h, insert then delete X
     dw 4700h,4D00h,5300h,'O',4F00h ; Home, Right past tab, replace O, End
     dw 3B00h,'x'                ; modal help in full Text view

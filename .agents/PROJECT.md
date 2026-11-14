@@ -42,6 +42,10 @@ Persistent user requirements:
 - F8 opens Go to offset in every mode: absolute plain hexadecimal, 1..8 digits,
   Enter accepts, Backspace corrects, Esc cancels. Zero and EOF are valid; errors
   keep the dialog open without navigation/data changes.
+- F9 opens search in every mode; Tab inside the dialog selects exact TEXT/HEX,
+  Enter searches, empty Enter repeats, Backspace corrects and Esc cancels.
+  F3 finds the next occurrence. Patterns are case-sensitive ASCII or hex byte
+  pairs, up to 32 bytes. Forward search wraps once and never modifies file data.
 
 ## Active files
 
@@ -61,6 +65,7 @@ Persistent user requirements:
 | `TESTS\HOSTTEST.PY` | Isolated negative freshness/link-result checks |
 | `TESTS\SAVEFAIL.INC` | Test-only DOS save-failure interception and recovery checks |
 | `TESTS\GOTO.INC` | F8 parser/input/range/navigation/colour regression checks |
+| `TESTS\SEARCH.INC` | F9/F3 parsing, search, repeat/wrap, bounds and UI checks |
 | `BUILD\MENUKEY.ASM` | Preserved working resident launcher-test key feeder |
 | `BUILD\MENUEXEC.ASM` | Preserved earlier child-COMMAND.COM debugging attempt |
 | `BUILD\MENU.IN` | Preserved stdin-redirection experiment input |
@@ -99,11 +104,12 @@ and committed separately; no push was requested for these improvement commits.
 Steps 1/2/3 are local commits `4265b58` (row boundaries), `5559de6` (fresh tests/
 save failures), and `0c52671` (layout cache); step 4 completes navigation/status
 polish as `5fb98de`. Detailed verification/history is in CHANGELOG.md.
-The subsequent user request authorizes committing F8 as
-`feat(editor): add F8 go-to-offset navigation` and publishing it together with
-those four local improvement commits to `origin/master`. The reviewed outgoing
-series starts at the remote baseline `b9611da`; the F8 commit includes source,
-help/docs/memory, GOTO.INC/core/release checks, and tracked rebuilt artifacts.
+F8 was committed and pushed as `a98f596` (`feat(editor): add F8 go-to-offset
+navigation`), together with all four improvement commits. The subsequent user
+request authorizes committing F9/F3 as `feat(editor): add F9 text and hex search
+with find next` and pushing `master` to `origin/master`, from baseline a98f596.
+That commit packages search implementation/help, README/memory, SEARCH.INC,
+core/release regressions and the tracked rebuilt artifacts.
 
 ## Architecture and invariants
 
@@ -206,6 +212,23 @@ help/docs/memory, GOTO.INC/core/release checks, and tracked rebuilt artifacts.
   target to a unique backup, then installs the new file. Failed installation
   attempts restoration. This is not power-loss-atomic. Successful replacement
   gives the file a new timestamp and normal attributes.
+- Search uses separate F9 draft/candidate/committed pattern buffers, so invalid
+  input and Esc never replace the previous pattern. `ResetSearchInput` defaults
+  to HEX in numeric focus and TEXT in ASCII/Text, then remembers accepted type.
+  `HandleSearchKey` keeps input bounded (96 visible chars + terminator); parser
+  accepts at most 95 raw chars and 32 decoded bytes. Text is exact printable
+  ASCII; HEX permits spaces between complete pairs, including zero/high bytes.
+  `BuildSearchPrefix`/`SearchSegment` implement KMP using a 32-word prefix table
+  and DOS-owned ReadByte access. `FindSearchPattern` scans from a candidate
+  offset to EOF and earlier candidates once, allowing overlapping matches and
+  matches across the starting position/64 KiB but never across physical EOF.
+  `RunSearch` navigates only on success and preserves editing mode/focus/data/
+  dirty state; a miss changes only search history/status. New queries start at
+  cursorOffset; RepeatSearch (F3 or empty Enter) starts after the current match.
+  Raw `searchLastMatch` and normalized `searchCursorAtMatch` keep LF searches
+  progressing in Text mode. Byte writes/deletions and loads invalidate that
+  match anchor. RenderSearchDialog uses rows 23/24, gray prompt/errors, purple
+  input (last 48 chars), green Mode label and yellow TEXT/HEX type.
 - Restore video mode/page and cursor settings on exit; prior screen contents
   are not retained. Free DOS memory and close all opened handles.
 
@@ -274,6 +297,7 @@ empty. One quoted filename is accepted, subject to DOS-visible/8.3 paths.
 F1 help, F2 save, F4 save-as, F5 binary, F6 hex, F7 Text; Tab toggles numeric/
 right-column ASCII in HEX/BIN or inserts a tab byte in Text. F8 goes to an
 absolute hexadecimal offset. Esc quits.
+F9 searches text/hex; F3 repeats the last search with forward wrap-around.
 
 Unattended build/test, followed by independent host verification:
 
@@ -301,7 +325,22 @@ with this bundled environment.
 
 ### Coverage and last verified results
 
-Latest verification: F8 Go to offset (2026-11-14), fresh RUN.PY production/core/
+Latest verification: F9 search (2026-11-14), fresh RUN.PY production/core/release/
+byte/hash checks and all five HOSTTEST cases passed. SEARCH.INC covers exact
+text/case, spaced/compact/maximum 32-byte HEX, malformed/odd/oversized/blank
+input, correction/cancellation and saved queries, all five mode/focus states,
+clean/dirty flags, overlapping/wrapped/missing patterns, empty/short files,
+last-position/cross-64-KiB matches, Text LF repeat progress, and dialog colours/
+input scrolling. Repetitive 32-byte match/miss cases enforce a linear read bound.
+KEYDRIVE exercises actual F9/F3 errors, cancellation, text/hex search, repeat/
+wrap and unchanged output bytes. Preserved debugging sources were not rebuilt
+or removed; no manual cleanup of DOSBox runtime output was performed.
+For search commit/push packaging, VERIFY.PY --fresh and all five HOSTTEST cases
+were rerun successfully, and authored-file whitespace checks passed. Runtime
+DOS tests were not repeated for packaging; the preceding fresh search-feature
+run remains the current production/core/release result.
+
+F8 verification (2026-11-14): fresh RUN.PY production/core/
 release/bytes/hash checks and all five HOSTTEST cases passed. GOTO.INC tests
 empty/invalid/overlength/full-32-bit parsing and ranges, Backspace correction,
 Esc and digit-selection retention, cross-64-KiB/EOF/zero jumps in five mode/
