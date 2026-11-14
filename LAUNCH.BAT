@@ -12,6 +12,12 @@ echo 4. View build and test logs
 echo 5. Return to DOS prompt
 echo 6. Build and run tests
 echo.
+echo Examples in DOS prompt:
+echo BUILD\BINED3.EXE TEXT.COM
+echo BUILD\BINED3.EXE NEW.BIN
+echo BUILD\BINED3.EXE
+echo BUILD\BINED3.EXE /?
+echo.
 choice /c123456 /n Select [1-6]:
 rem Test ERRORLEVEL in descending order: IF means greater than or equal.
 if errorlevel 6 goto tests
@@ -23,17 +29,20 @@ if errorlevel 1 goto buildrun
 goto menu
 
 :buildrun
+echo .
 call BUILD.BAT
 if "%BINED_BUILT%"=="1" goto run
 pause
 goto menu
 
 :build
+echo .
 call BUILD.BAT
 pause
 goto menu
 
 :tests
+echo .
 call BUILD.BAT
 if not "%BINED_BUILT%"=="1" goto testbuildfailed
 call TESTS\TEST.BAT
@@ -45,11 +54,13 @@ pause
 goto menu
 
 :testbuildfailed
+echo .
 echo Tests were not run because the editor build failed. Choose 4 for logs.
 pause
 goto menu
 
 :testfailed
+echo .
 echo Tests failed. Choose 4 to view build and test logs.
 pause
 goto menu
@@ -66,6 +77,7 @@ BUILD\BINED3.EXE %1
 goto menu
 
 :missing
+echo .
 echo No BUILD\BINED3.EXE found. Choose 1 or 2 to build first.
 pause
 goto menu
@@ -112,3 +124,4 @@ pause
 goto menu
 
 :end
+echo .

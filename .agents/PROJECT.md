@@ -72,12 +72,16 @@ modal-help/palette update at `6b7cc88` (`feat(ui): redesign F1 help and refine
 editor colours`). That update includes regression checks, README/memory, and
 tracked EXE/OBJ/LST/MAP/log artifacts under `BUILD`. The worktree was clean
 before the ASCII-mode task; earlier deletions described above are historical.
-The completed ASCII feature and final independent Tab/F7 workflow are prepared
-for a `feat(editor)` commit with updated help, regression checks, README/memory,
+The completed ASCII feature and final independent Tab/F7 workflow were committed
+as `db6147e` (`feat(editor): add ASCII editing in hex and binary views`) and
+pushed to `origin/master`, including help, regression checks, README/memory,
 pre-commit memory instructions, and tracked rebuilt BUILD artifacts. Branch
 `master` tracks `origin/master` at `https://github.com/ambrose40/BINED.git`.
-Separate user edits in `LAUNCH.BAT` (usage examples and extra echo lines) were
-present at packaging time and are left uncommitted by this editor-feature task.
+The user's separate `LAUNCH.BAT` display edits are now being packaged as
+`feat(launcher): show usage examples and output separators`: the menu prints
+four DOS editor invocation examples, and action/error/exit paths include
+additional `echo .` dot separator lines. Menu choices and dispatch are unchanged.
+This follow-up request is commit-only.
 
 ## Architecture and invariants
 

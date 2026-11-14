@@ -305,3 +305,18 @@ introduced on 2026-10-23.
 - **Remaining:** Commit/push completion is reported in the final response.
   `LAUNCH.BAT` remains local user work; the known DOSBox attribute-reporting
   limitation is unchanged.
+
+## 2026-11-14 — Commit the user's launcher display edits
+
+- **Request:** Commit the user's `LAUNCH.BAT` edits with a corresponding message.
+- **Changes:** Preserved the user's edits exactly: four DOS invocation examples
+  below the menu and additional `echo .` dot separators in action/error/exit
+  paths. Prepared `feat(launcher): show usage examples and output separators`.
+  Updated both memory files before committing, including confirmation that the
+  preceding ASCII feature commit `db6147e` was pushed to `origin/master`.
+- **Verification:** Reviewed status, full launcher source/diff, and recent
+  history. Launcher whitespace check passed. No DOS runtime tests were rerun
+  for this commit-only display update; earlier editor test results are recorded
+  above and are not current launcher runtime verification.
+- **Remaining:** No runtime issue identified in the reviewed display-only diff.
+  This request authorizes a local commit; pushing was not requested.
