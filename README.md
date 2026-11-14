@@ -222,8 +222,10 @@ the hex/binary data. The **filename and Save As input are also purple**.
 The editor title is **bright white**,
 the **OFFSET, DATA, and ASCII column labels are bright red**,
 the active **HEX/BIN/ASCII/Text mode is bright yellow**, and the
-right-hand **ASCII preview is light gray**. In ASCII mode the selected
-character or EOF marker is purple; in HEX/BIN the entire preview stays gray.
+right-hand **ASCII preview is light gray**, with the **selected byte in bright
+red while numeric HEX/BIN editing is active**. This also highlights the dot
+used for a selected non-printable byte. In ASCII editing the selected character
+or EOF marker is purple. Other preview characters stay light gray.
 Full-screen **Text characters are bright green** and the **current character
 or EOF marker is purple**, matching numeric editing. A selected tab highlights
 its first cell. The byte inspector has green labels and dark-purple values.

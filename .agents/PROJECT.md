@@ -19,8 +19,9 @@ Persistent user requirements:
 - Use green over black, dark-green secondary text, and purple highlights.
 - Main title is bright white; OFFSET/DATA/ASCII column labels are bright red.
   The active HEX/BIN/ASCII/Text label is bright yellow. Right-hand ASCII preview
-  symbols are light gray in HEX/BIN (including the selected byte); in ASCII
-  mode the selected character/EOF marker is purple. Hex/binary selection
+  symbols are light gray, with the selected byte bright red during numeric
+  HEX/BIN editing (including the dot for a non-printable byte); in ASCII
+  editing the selected character/EOF marker is purple. Hex/binary selection
   remains purple in the data column.
   The filename and Save As input are purple; the bottom status line and
   Save As/unsaved-quit prompts are light gray.
@@ -105,11 +106,14 @@ Steps 1/2/3 are local commits `4265b58` (row boundaries), `5559de6` (fresh tests
 save failures), and `0c52671` (layout cache); step 4 completes navigation/status
 polish as `5fb98de`. Detailed verification/history is in CHANGELOG.md.
 F8 was committed and pushed as `a98f596` (`feat(editor): add F8 go-to-offset
-navigation`), together with all four improvement commits. The subsequent user
-request authorizes committing F9/F3 as `feat(editor): add F9 text and hex search
-with find next` and pushing `master` to `origin/master`, from baseline a98f596.
-That commit packages search implementation/help, README/memory, SEARCH.INC,
-core/release regressions and the tracked rebuilt artifacts.
+navigation`), together with all four improvement commits. F9/F3 was subsequently
+committed and pushed as `153bde5` (`feat(editor): add F9 text and hex search with
+find next`), including search/help, README/memory, SEARCH.INC, core/release
+regressions and rebuilt artifacts.
+The bright-red mirrored ASCII selection is prepared as
+`feat(ui): highlight selected ASCII preview in hex and binary modes`, targeting
+master -> origin/master from baseline 153bde5. It packages the renderer change,
+palette regressions, README/memory and the tracked rebuilt editor/test artifacts.
 
 ## Architecture and invariants
 
@@ -250,10 +254,16 @@ The `ATTR_*` constants near the top of `BINED3.ASM` define VGA text attributes:
 | `ATTR_COLUMN` | `0Ch` | Bright-red OFFSET/DATA/ASCII column labels |
 | `ATTR_MODE` | `0Eh` | Bright-yellow active HEX/BIN/ASCII/Text label |
 | `ATTR_ASCII` | `07h` | Light-gray ASCII preview and F1 descriptions/EOF note; ASCII edit selection uses `ATTR_SELECTED` |
+| `ATTR_ASCII_SELECTED` | `0Ch` | Bright-red selected right-hand preview byte during numeric HEX/BIN editing |
 
 All backgrounds are black. Existing video assertions check selected `A` as
 `0D41h` and selected EOF `-` as `0D2Dh`. Additional assertions cover numeric
 value and footer colours, preserving the green labels.
+Numeric HEX/BIN now mirror selection in the ASCII column using a distinct
+ATTR_ASCII_SELECTED. Inactive preview characters use ATTR_ASCII; Tab-focused
+ASCII editing uses purple ATTR_SELECTED instead. Numeric data selection and
+Text-mode colours keep their existing palette. Numeric EOF has no ASCII byte
+preview; moving there clears the previous red preview highlight.
 The current source also uses `ATTR_FOOTER` to fill rows 23/24 in
 `DialogPrompt` and row 24 during Save As input; prompt text inherits that
 attribute, while the typed path uses `ATTR_SELECTED`.
@@ -325,7 +335,16 @@ with this bundled environment.
 
 ### Coverage and last verified results
 
-Latest verification: F9 search (2026-11-14), fresh RUN.PY production/core/release/
+Latest verification: bright-red selected ASCII preview (2026-11-14), fresh
+RUN.PY production/core/release/byte/hash checks and all five HOSTTEST cases
+passed. Updated selected-dot assertions to 0C2Eh in HEX/BIN; added printable
+Q = 0C51h in both layouts and gray 0751h after moving to EOF. Existing checks
+still cover purple ASCII editing selection/EOF and full-screen Text colours.
+For commit/push packaging, VERIFY.PY --fresh, all five HOSTTEST cases and the
+authored-file whitespace check were rerun successfully. Runtime DOS tests were
+not repeated for packaging; the preceding palette-feature run is current.
+
+F9 verification (2026-11-14): fresh RUN.PY production/core/release/
 byte/hash checks and all five HOSTTEST cases passed. SEARCH.INC covers exact
 text/case, spaced/compact/maximum 32-byte HEX, malformed/odd/oversized/blank
 input, correction/cancellation and saved queries, all five mode/focus states,

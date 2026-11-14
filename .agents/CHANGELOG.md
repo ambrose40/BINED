@@ -545,3 +545,39 @@ introduced on 2026-10-23.
   records the passing fresh production/core/release run.
 - **Remaining:** Commit/push completion is reported in the final response.
   Existing DOSBox mounted-drive attribute-reporting limitation is unchanged.
+
+## 2026-11-14 — Bright-red selected byte in HEX/BIN ASCII previews
+
+- **Request:** Also display the selected byte in the right-hand ASCII column
+  in HEX and BIN modes, using bright red.
+- **Changes:** Added ATTR_ASCII_SELECTED (0Ch) in BINED3.ASM. Numeric HEX/BIN
+  selection is mirrored in bright red in the ASCII preview; inactive previews
+  stay light gray and ASCII-edit focus stays purple. Updated existing core
+  colour assertions and printable/movement checks, README and both memory
+  files; rebuilt tracked artifacts. Recorded published F9 commit 153bde5.
+- **Verification:** `python TESTS/RUN.PY` passed fresh warning-/error-free DOS
+  production/core/release, byte/log/hash and staging checks. Core video tests
+  verified bright-red printable/non-printable selection in both layouts,
+  removal of red highlighting on movement to EOF, and existing purple ASCII
+  editing/Text palettes. `python TESTS/HOSTTEST.PY` passed all five cases.
+  Authored-file whitespace check passed.
+- **Remaining:** None for this request. Existing DOSBox attribute-reporting
+  limitation remains. No commit/push was requested; debugging sources retained.
+
+## 2026-11-14 — Commit and push mirrored ASCII selection
+
+- **Request:** Commit implemented changes and push upstream.
+- **Changes:** Prepared `feat(ui): highlight selected ASCII preview in hex and
+  binary modes` with ATTR_ASCII_SELECTED/rendering, core palette/movement tests,
+  README, both updated project memory files and tracked rebuilt BUILD artifacts.
+  Reviewed and updated memory before committing. Target: master -> origin/master
+  in ambrose40/BINED, starting at 153bde5.
+- **Verification:** Reviewed worktree/source/test/docs/generated maps/logs and
+  palette listing entries, recent history and branch/remote tracking. Reran
+  `python TESTS/VERIFY.PY --fresh` successfully for exact bytes, cleanup, logs
+  and source/output hashes; all five `python TESTS/HOSTTEST.PY` cases passed.
+  Authored-file whitespace check passed. Runtime DOS tests were not repeated
+  for this packaging-only task; the preceding entry records the fresh passing
+  production/core/release palette-feature run.
+- **Remaining:** Commit/push completion is reported in the final response.
+  The known DOSBox attribute-reporting limitation is unchanged.

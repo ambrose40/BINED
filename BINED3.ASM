@@ -57,6 +57,7 @@ ATTR_HEADING    equ 0Fh           ; bright-white editor title
 ATTR_COLUMN     equ 0Ch           ; bright-red OFFSET / DATA / ASCII labels
 ATTR_MODE       equ 0Eh           ; bright-yellow HEX / BIN / ASCII / Text mode
 ATTR_ASCII      equ 07h           ; light-gray ASCII preview
+ATTR_ASCII_SELECTED equ 0Ch       ; bright-red selected preview in HEX/BIN numeric focus
 
 _STACK segment para stack use16 'STACK'
     db STACK_BYTES dup (?)
@@ -2803,10 +2804,11 @@ render_ascii_dot:
     mov al,'.'
 render_ascii_output:
     mov ah,ATTR_ASCII
-    cmp editMode,2
-    jne render_ascii_store
     mov edx,renderOffset
     cmp edx,cursorOffset
+    jne render_ascii_store
+    mov ah,ATTR_ASCII_SELECTED
+    cmp editMode,2
     jne render_ascii_store
     mov ah,ATTR_SELECTED
 render_ascii_store:

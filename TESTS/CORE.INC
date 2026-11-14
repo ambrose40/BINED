@@ -789,7 +789,7 @@ test_dispatch_loop:
     jne TestFailed
     cmp word ptr es:[160+61*2],0C41h   ; bright-red ASCII heading 'A'
     jne TestFailed
-    cmp word ptr es:[2*160+61*2],072Eh ; gray ASCII dot, even for selected byte
+    cmp word ptr es:[2*160+61*2],0C2Eh ; selected ASCII dot is bright red in HEX
     jne TestFailed
     cmp word ptr es:[22*160+8*2],0530h  ; dark-purple Offset value
     jne TestFailed
@@ -806,6 +806,15 @@ test_dispatch_loop:
     int 10h
     cmp dx,020Ah
     jne TestFailed
+    xor eax,eax
+    mov dl,'Q'
+    call WriteByte
+    call RenderScreen
+    cmp word ptr es:[2*160+61*2],0C51h ; selected printable Q is bright red too
+    jne TestFailed
+    xor eax,eax
+    mov dl,0A5h
+    call WriteByte
     mov al,1
     call SetMode
     call RenderScreen
@@ -817,12 +826,23 @@ test_dispatch_loop:
     jne TestFailed
     cmp word ptr es:[160+66*2],0C41h   ; red ASCII heading in binary mode
     jne TestFailed
-    cmp word ptr es:[2*160+66*2],072Eh ; gray ASCII preview in binary mode
+    cmp word ptr es:[2*160+66*2],0C2Eh ; selected ASCII dot is bright red in BIN
+    jne TestFailed
+    xor eax,eax
+    mov dl,'Q'
+    call WriteByte
+    call RenderScreen
+    cmp word ptr es:[2*160+66*2],0C51h ; selected printable Q in BIN
     jne TestFailed
     mov cursorOffset,1
     call RenderScreen
+    cmp word ptr es:[2*160+66*2],0751h ; moving to EOF removes preview highlight
+    jne TestFailed
     cmp word ptr es:[2*160+19*2],0D2Dh ; purple selected EOF '-', black background
     jne TestFailed
+    xor eax,eax
+    mov dl,0A5h
+    call WriteByte
 
     xor al,al
     call SetMode
